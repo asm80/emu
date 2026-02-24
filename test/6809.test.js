@@ -454,42 +454,42 @@ QUnit.module("Motorola 6809 CPU Emulator", () => {
     QUnit.test("Direct page addressing", (assert) => {
       const { cpu } = createTestCPU();
 
-      assert.deepEqual(cpu.disasm(0x96, 0x50, 0, 0, 0, 0x1000), ["LDA $50", 4], "LDA direct");
-      assert.deepEqual(cpu.disasm(0xD6, 0x60, 0, 0, 0, 0x1000), ["LDB $60", 4], "LDB direct");
-      assert.deepEqual(cpu.disasm(0x97, 0x70, 0, 0, 0, 0x1000), ["STA $70", 4], "STA direct");
-      assert.deepEqual(cpu.disasm(0xD7, 0x80, 0, 0, 0, 0x1000), ["STB $80", 4], "STB direct");
+      assert.deepEqual(cpu.disasm(0x96, 0x50, 0, 0, 0, 0x1000), ["LDA $50", 2], "LDA direct");
+      assert.deepEqual(cpu.disasm(0xD6, 0x60, 0, 0, 0, 0x1000), ["LDB $60", 2], "LDB direct");
+      assert.deepEqual(cpu.disasm(0x97, 0x70, 0, 0, 0, 0x1000), ["STA $70", 2], "STA direct");
+      assert.deepEqual(cpu.disasm(0xD7, 0x80, 0, 0, 0, 0x1000), ["STB $80", 2], "STB direct");
     });
 
     QUnit.test("Branch instructions", (assert) => {
       const { cpu } = createTestCPU();
 
-      assert.deepEqual(cpu.disasm(0x20, 0x10, 0, 0, 0, 0x1000), ["BRA #$1012", 3], "BRA");
-      assert.deepEqual(cpu.disasm(0x27, 0x05, 0, 0, 0, 0x1000), ["BEQ #$1007", 3], "BEQ");
-      assert.deepEqual(cpu.disasm(0x26, 0x08, 0, 0, 0, 0x1000), ["BNE #$100A", 3], "BNE");
-      assert.deepEqual(cpu.disasm(0x2C, 0xFE, 0, 0, 0, 0x1000), ["BGE #$1000", 3], "BGE backward");
-      assert.deepEqual(cpu.disasm(0x2D, 0xFC, 0, 0, 0, 0x1000), ["BLT #$0FFE", 3], "BLT backward");
-      assert.deepEqual(cpu.disasm(0x22, 0x03, 0, 0, 0, 0x1000), ["BHI #$1005", 3], "BHI");
-      assert.deepEqual(cpu.disasm(0x23, 0x04, 0, 0, 0, 0x1000), ["BLS #$1006", 3], "BLS");
-      assert.deepEqual(cpu.disasm(0x24, 0x02, 0, 0, 0, 0x1000), ["BCC #$1004", 3], "BCC");
-      assert.deepEqual(cpu.disasm(0x25, 0x06, 0, 0, 0, 0x1000), ["BCS #$1008", 3], "BCS");
+      assert.deepEqual(cpu.disasm(0x20, 0x10, 0, 0, 0, 0x1000), ["BRA #$1012", 2], "BRA");
+      assert.deepEqual(cpu.disasm(0x27, 0x05, 0, 0, 0, 0x1000), ["BEQ #$1007", 2], "BEQ");
+      assert.deepEqual(cpu.disasm(0x26, 0x08, 0, 0, 0, 0x1000), ["BNE #$100A", 2], "BNE");
+      assert.deepEqual(cpu.disasm(0x2C, 0xFE, 0, 0, 0, 0x1000), ["BGE #$1000", 2], "BGE backward");
+      assert.deepEqual(cpu.disasm(0x2D, 0xFC, 0, 0, 0, 0x1000), ["BLT #$0FFE", 2], "BLT backward");
+      assert.deepEqual(cpu.disasm(0x22, 0x03, 0, 0, 0, 0x1000), ["BHI #$1005", 2], "BHI");
+      assert.deepEqual(cpu.disasm(0x23, 0x04, 0, 0, 0, 0x1000), ["BLS #$1006", 2], "BLS");
+      assert.deepEqual(cpu.disasm(0x24, 0x02, 0, 0, 0, 0x1000), ["BCC #$1004", 2], "BCC");
+      assert.deepEqual(cpu.disasm(0x25, 0x06, 0, 0, 0, 0x1000), ["BCS #$1008", 2], "BCS");
     });
 
     QUnit.test("TFR/EXG with register codes", (assert) => {
       const { cpu } = createTestCPU();
 
-      assert.deepEqual(cpu.disasm(0x1F, 0x12, 0, 0, 0, 0x1000), ["TFR X,Y", 6], "TFR X,Y");
-      assert.deepEqual(cpu.disasm(0x1F, 0x89, 0, 0, 0, 0x1000), ["TFR A,B", 6], "TFR A,B");
-      assert.deepEqual(cpu.disasm(0x1E, 0x12, 0, 0, 0, 0x1000), ["EXG X,Y", 8], "EXG X,Y");
-      assert.deepEqual(cpu.disasm(0x1E, 0x34, 0, 0, 0, 0x1000), ["EXG U,S", 8], "EXG U,S");
+      assert.deepEqual(cpu.disasm(0x1F, 0x12, 0, 0, 0, 0x1000), ["TFR X,Y", 2], "TFR X,Y");
+      assert.deepEqual(cpu.disasm(0x1F, 0x89, 0, 0, 0, 0x1000), ["TFR A,B", 2], "TFR A,B");
+      assert.deepEqual(cpu.disasm(0x1E, 0x12, 0, 0, 0, 0x1000), ["EXG X,Y", 2], "EXG X,Y");
+      assert.deepEqual(cpu.disasm(0x1E, 0x34, 0, 0, 0, 0x1000), ["EXG U,S", 2], "EXG U,S");
     });
 
     QUnit.test("LEA instructions", (assert) => {
       const { cpu } = createTestCPU();
 
-      assert.deepEqual(cpu.disasm(0x30, 0x88, 0, 0, 0, 0x1000)[0], "LEAX ", "LEAX (starts with)");
-      assert.deepEqual(cpu.disasm(0x31, 0x88, 0, 0, 0, 0x1000)[0], "LEAY ", "LEAY (starts with)");
-      assert.deepEqual(cpu.disasm(0x32, 0x88, 0, 0, 0, 0x1000)[0], "LEAS ", "LEAS (starts with)");
-      assert.deepEqual(cpu.disasm(0x33, 0x88, 0, 0, 0, 0x1000)[0], "LEAU ", "LEAU (starts with)");
+      assert.ok(cpu.disasm(0x30, 0x88, 0, 0, 0, 0x1000)[0].startsWith("LEAX "), "LEAX (starts with)");
+      assert.ok(cpu.disasm(0x31, 0x88, 0, 0, 0, 0x1000)[0].startsWith("LEAY "), "LEAY (starts with)");
+      assert.ok(cpu.disasm(0x32, 0x88, 0, 0, 0, 0x1000)[0].startsWith("LEAS "), "LEAS (starts with)");
+      assert.ok(cpu.disasm(0x33, 0x88, 0, 0, 0, 0x1000)[0].startsWith("LEAU "), "LEAU (starts with)");
     });
 
     QUnit.test("PSH/PUL with register masks", (assert) => {
@@ -506,6 +506,683 @@ QUnit.module("Motorola 6809 CPU Emulator", () => {
 
       const puluResult = cpu.disasm(0x37, 0x30, 0, 0, 0, 0x1000);
       assert.ok(puluResult[0].startsWith("PULU"), "PULU instruction");
+    });
+  });
+
+  QUnit.module("Direct Page Addressing", () => {
+    QUnit.test("LDA direct - load from direct page", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0050] = 0x42;      // Data at direct page address
+      mem[0x1000] = 0x96;      // LDA direct
+      mem[0x1001] = 0x50;      // offset
+
+      cpu.steps(4);
+      assert.equal(cpu.status().a, 0x42, "A loaded from $0050");
+    });
+
+    QUnit.test("STA direct - store to direct page", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA immediate
+      mem[0x1001] = 0x99;
+      mem[0x1002] = 0x97;      // STA direct
+      mem[0x1003] = 0x60;
+
+      cpu.steps(6);
+      assert.equal(mem[0x0060], 0x99, "Memory[0x0060] = 0x99");
+    });
+
+    QUnit.test("LDB direct - load B from direct page", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0070] = 0x33;
+      mem[0x1000] = 0xD6;      // LDB direct
+      mem[0x1001] = 0x70;
+
+      cpu.steps(4);
+      assert.equal(cpu.status().b, 0x33, "B loaded from $0070");
+    });
+
+    QUnit.test("STB direct - store B to direct page", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0xC6;      // LDB immediate
+      mem[0x1001] = 0x77;
+      mem[0x1002] = 0xD7;      // STB direct
+      mem[0x1003] = 0x80;
+
+      cpu.steps(6);
+      assert.equal(mem[0x0080], 0x77, "Memory[0x0080] = 0x77");
+    });
+  });
+
+  QUnit.module("Extended Addressing", () => {
+    QUnit.test("LDA extended - load from 16-bit address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x2000] = 0xAB;
+      mem[0x1000] = 0xB6;      // LDA extended
+      mem[0x1001] = 0x20;
+      mem[0x1002] = 0x00;
+
+      cpu.steps(5);
+      assert.equal(cpu.status().a, 0xAB, "A loaded from $2000");
+    });
+
+    QUnit.test("STA extended - store to 16-bit address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA immediate
+      mem[0x1001] = 0x55;
+      mem[0x1002] = 0xB7;      // STA extended
+      mem[0x1003] = 0x30;
+      mem[0x1004] = 0x00;
+
+      cpu.steps(7);
+      assert.equal(mem[0x3000], 0x55, "Memory[0x3000] = 0x55");
+    });
+
+    QUnit.test("LDB extended - load B from 16-bit address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x4000] = 0xCD;
+      mem[0x1000] = 0xF6;      // LDB extended
+      mem[0x1001] = 0x40;
+      mem[0x1002] = 0x00;
+
+      cpu.steps(5);
+      assert.equal(cpu.status().b, 0xCD, "B loaded from $4000");
+    });
+
+    QUnit.test("STB extended - store B to 16-bit address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0xC6;      // LDB immediate
+      mem[0x1001] = 0xEF;
+      mem[0x1002] = 0xF7;      // STB extended
+      mem[0x1003] = 0x50;
+      mem[0x1004] = 0x00;
+
+      cpu.steps(7);
+      assert.equal(mem[0x5000], 0xEF, "Memory[0x5000] = 0xEF");
+    });
+
+    QUnit.test("LDX extended - load X from 16-bit address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x2000] = 0x12;
+      mem[0x2001] = 0x34;
+      mem[0x1000] = 0xBE;      // LDX extended
+      mem[0x1001] = 0x20;
+      mem[0x1002] = 0x00;
+
+      cpu.steps(5);
+      assert.equal(cpu.status().x, 0x1234, "X loaded from $2000");
+    });
+
+    QUnit.test("STX extended - store X to 16-bit address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x8E;      // LDX immediate
+      mem[0x1001] = 0xAB;
+      mem[0x1002] = 0xCD;
+      mem[0x1003] = 0xBF;      // STX extended
+      mem[0x1004] = 0x60;
+      mem[0x1005] = 0x00;
+
+      cpu.steps(8);
+      assert.equal(mem[0x6000], 0xAB, "High byte stored");
+      assert.equal(mem[0x6001], 0xCD, "Low byte stored");
+    });
+  });
+
+  QUnit.module("Indexed Addressing", () => {
+    QUnit.test("LDA indexed ,X - load via X register", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x2000] = 0x77;
+      // LDX #$2000, then LDA ,X (postbyte 0x84 = ,X no offset)
+      mem[0x1000] = 0x8E;      // LDX immediate
+      mem[0x1001] = 0x20;
+      mem[0x1002] = 0x00;
+      mem[0x1003] = 0xA6;      // LDA indexed
+      mem[0x1004] = 0x84;      // postbyte: ,X (register direct)
+
+      cpu.steps(8);
+      assert.equal(cpu.status().a, 0x77, "A loaded via X");
+    });
+
+    QUnit.test("STA indexed ,X - store via X register", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA immediate
+      mem[0x1001] = 0x42;
+      mem[0x1002] = 0x8E;      // LDX immediate
+      mem[0x1003] = 0x30;
+      mem[0x1004] = 0x00;
+      mem[0x1005] = 0xA7;      // STA indexed
+      mem[0x1006] = 0x84;      // postbyte: ,X
+
+      cpu.steps(11);
+      assert.equal(mem[0x3000], 0x42, "A stored via X");
+    });
+
+    QUnit.test("LDA indexed ,X+ (post-increment)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x2000] = 0x55;
+      mem[0x1000] = 0x8E;      // LDX #$2000
+      mem[0x1001] = 0x20;
+      mem[0x1002] = 0x00;
+      mem[0x1003] = 0xA6;      // LDA indexed
+      mem[0x1004] = 0x80;      // postbyte: ,X+
+
+      cpu.steps(8);
+      const state = cpu.status();
+      assert.equal(state.a, 0x55, "A loaded");
+      assert.equal(state.x, 0x2001, "X post-incremented");
+    });
+
+    QUnit.test("LDB indexed ,Y - load B via Y register", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x4000] = 0xCC;
+      // LDY #$4000
+      mem[0x1000] = 0x10;      // Page 2 prefix
+      mem[0x1001] = 0x8E;      // LDY immediate
+      mem[0x1002] = 0x40;
+      mem[0x1003] = 0x00;
+      mem[0x1004] = 0xE6;      // LDB indexed
+      mem[0x1005] = 0xA4;      // postbyte: ,Y
+
+      cpu.steps(9);
+      assert.equal(cpu.status().b, 0xCC, "B loaded via Y");
+    });
+
+    QUnit.test("LDA indexed with 8-bit offset from X", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x2005] = 0x88;
+      mem[0x1000] = 0x8E;      // LDX #$2000
+      mem[0x1001] = 0x20;
+      mem[0x1002] = 0x00;
+      mem[0x1003] = 0xA6;      // LDA indexed
+      mem[0x1004] = 0x88;      // postbyte: 8-bit offset from X
+      mem[0x1005] = 0x05;      // offset = +5
+
+      cpu.steps(9);
+      assert.equal(cpu.status().a, 0x88, "A loaded at X+5");
+    });
+  });
+
+  QUnit.module("Conditional Branches", () => {
+    QUnit.test("BCC - Branch if carry clear (taken)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      // Clear carry with ANDCC
+      mem[0x1000] = 0x1C;      // ANDCC
+      mem[0x1001] = 0xFE;      // clear carry bit
+      mem[0x1002] = 0x24;      // BCC
+      mem[0x1003] = 0x05;      // offset +5
+
+      cpu.steps(1);
+      cpu.steps(1);
+      assert.equal(cpu.status().pc, 0x1009, "Branch taken to 0x1009");
+    });
+
+    QUnit.test("BCS - Branch if carry set (taken)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      // Set carry with ORCC
+      mem[0x1000] = 0x1A;      // ORCC
+      mem[0x1001] = 0x01;      // set carry bit
+      mem[0x1002] = 0x25;      // BCS
+      mem[0x1003] = 0x05;      // offset +5
+
+      cpu.steps(1);
+      cpu.steps(1);
+      assert.equal(cpu.status().pc, 0x1009, "Branch taken to 0x1009");
+    });
+
+    QUnit.test("BGT - Branch if greater than", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      // Clear N, V, Z flags (result is positive, non-zero)
+      mem[0x1000] = 0x1C;      // ANDCC
+      mem[0x1001] = 0x8F;      // clear N, V, Z
+      mem[0x1002] = 0x2E;      // BGT
+      mem[0x1003] = 0x04;      // offset +4
+
+      cpu.steps(1);
+      cpu.steps(1);
+      assert.equal(cpu.status().pc, 0x1008, "BGT taken to 0x1008");
+    });
+
+    QUnit.test("BLE - Branch if less or equal (Z set)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      // Set Z flag
+      mem[0x1000] = 0x1A;      // ORCC
+      mem[0x1001] = 0x04;      // set Z bit
+      mem[0x1002] = 0x2F;      // BLE
+      mem[0x1003] = 0x04;      // offset +4
+
+      cpu.steps(1);
+      cpu.steps(1);
+      assert.equal(cpu.status().pc, 0x1008, "BLE taken when Z set");
+    });
+
+    QUnit.test("LBSR - Long branch to subroutine", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x17;      // LBSR
+      mem[0x1001] = 0x00;      // offset high
+      mem[0x1002] = 0x10;      // offset low = +16
+
+      cpu.steps(9);
+      assert.equal(cpu.status().pc, 0x1013, "LBSR jumped to 0x1013");
+    });
+  });
+
+  QUnit.module("ALU Direct/Extended Operations", () => {
+    QUnit.test("ADDA direct - add from memory", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0020] = 0x10;
+      mem[0x1000] = 0x86;      // LDA #$20
+      mem[0x1001] = 0x20;
+      mem[0x1002] = 0x9B;      // ADDA direct
+      mem[0x1003] = 0x20;
+
+      cpu.steps(6);
+      assert.equal(cpu.status().a, 0x30, "A = 0x20 + 0x10 = 0x30");
+    });
+
+    QUnit.test("CMPA extended - compare A with memory", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x3000] = 0x42;
+      mem[0x1000] = 0x86;      // LDA #$42
+      mem[0x1001] = 0x42;
+      mem[0x1002] = 0xB1;      // CMPA extended
+      mem[0x1003] = 0x30;
+      mem[0x1004] = 0x00;
+
+      cpu.steps(7);
+      const state = cpu.status();
+      assert.ok(state.flags & 0x04, "Zero flag set when A == mem");
+      assert.equal(state.a, 0x42, "A unchanged after CMP");
+    });
+
+    QUnit.test("ANDA direct - AND A with memory", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0030] = 0x0F;
+      mem[0x1000] = 0x86;      // LDA #$FF
+      mem[0x1001] = 0xFF;
+      mem[0x1002] = 0x94;      // ANDA direct
+      mem[0x1003] = 0x30;
+
+      cpu.steps(6);
+      assert.equal(cpu.status().a, 0x0F, "A = 0xFF AND 0x0F = 0x0F");
+    });
+
+    QUnit.test("ORAA direct - OR A with memory", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0040] = 0x0F;
+      mem[0x1000] = 0x86;      // LDA #$F0
+      mem[0x1001] = 0xF0;
+      mem[0x1002] = 0x9A;      // ORA direct
+      mem[0x1003] = 0x40;
+
+      cpu.steps(6);
+      assert.equal(cpu.status().a, 0xFF, "A = 0xF0 OR 0x0F = 0xFF");
+    });
+
+    QUnit.test("NEG direct - negate memory byte", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0050] = 0x05;
+      mem[0x1000] = 0x00;      // NEG direct
+      mem[0x1001] = 0x50;
+
+      cpu.steps(6);
+      assert.equal(mem[0x0050], 0xFB, "Memory negated: 0x05 -> 0xFB");
+    });
+
+    QUnit.test("INC direct - increment memory byte", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0060] = 0x0A;
+      mem[0x1000] = 0x0C;      // INC direct
+      mem[0x1001] = 0x60;
+
+      cpu.steps(6);
+      assert.equal(mem[0x0060], 0x0B, "Memory incremented: 0x0A -> 0x0B");
+    });
+
+    QUnit.test("DEC direct - decrement memory byte", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0070] = 0x0A;
+      mem[0x1000] = 0x0A;      // DEC direct
+      mem[0x1001] = 0x70;
+
+      cpu.steps(6);
+      assert.equal(mem[0x0070], 0x09, "Memory decremented: 0x0A -> 0x09");
+    });
+
+    QUnit.test("ASL direct - arithmetic shift left", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0080] = 0x01;
+      mem[0x1000] = 0x08;      // ASL direct
+      mem[0x1001] = 0x80;
+
+      cpu.steps(6);
+      assert.equal(mem[0x0080], 0x02, "Shifted left: 0x01 -> 0x02");
+    });
+
+    QUnit.test("LSR direct - logical shift right", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x0090] = 0x04;
+      mem[0x1000] = 0x04;      // LSR direct
+      mem[0x1001] = 0x90;
+
+      cpu.steps(6);
+      assert.equal(mem[0x0090], 0x02, "Shifted right: 0x04 -> 0x02");
+    });
+
+    QUnit.test("ROL direct - rotate left through carry", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x00A0] = 0x40;
+      // Set carry
+      mem[0x1000] = 0x1A;      // ORCC
+      mem[0x1001] = 0x01;      // set C
+      mem[0x1002] = 0x09;      // ROL direct
+      mem[0x1003] = 0xA0;
+
+      cpu.steps(6);
+      assert.equal(mem[0x00A0], 0x81, "0x40 ROL with C=1 = 0x81");
+    });
+
+    QUnit.test("ROR direct - rotate right through carry", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x00B0] = 0x01;
+      // Set carry
+      mem[0x1000] = 0x1A;      // ORCC
+      mem[0x1001] = 0x01;      // set C
+      mem[0x1002] = 0x06;      // ROR direct
+      mem[0x1003] = 0xB0;
+
+      cpu.steps(6);
+      assert.equal(mem[0x00B0], 0x80, "0x01 ROR with C=1 = 0x80");
+    });
+
+    QUnit.test("TST direct - test memory byte (flags only)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x00C0] = 0x00;
+      mem[0x1000] = 0x0D;      // TST direct
+      mem[0x1001] = 0xC0;
+
+      cpu.steps(6);
+      assert.ok(cpu.status().flags & 0x04, "Zero flag set for zero value");
+    });
+
+    QUnit.test("CLR direct - clear memory byte", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x00D0] = 0xFF;
+      mem[0x1000] = 0x0F;      // CLR direct
+      mem[0x1001] = 0xD0;
+
+      cpu.steps(6);
+      assert.equal(mem[0x00D0], 0x00, "Memory cleared to 0");
+    });
+
+    QUnit.test("COM direct - complement memory byte", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x00E0] = 0xAA;
+      mem[0x1000] = 0x03;      // COM direct
+      mem[0x1001] = 0xE0;
+
+      cpu.steps(6);
+      assert.equal(mem[0x00E0], 0x55, "0xAA complemented to 0x55");
+    });
+  });
+
+  QUnit.module("JMP/JSR Instructions", () => {
+    QUnit.test("JMP direct - jump to direct page address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x0E;      // JMP direct
+      mem[0x1001] = 0x50;      // target $0050
+
+      cpu.steps(3);
+      assert.equal(cpu.status().pc, 0x0050, "PC = 0x0050");
+    });
+
+    QUnit.test("JMP extended - jump to 16-bit address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x7E;      // JMP extended
+      mem[0x1001] = 0x20;
+      mem[0x1002] = 0x00;
+
+      cpu.steps(4);
+      assert.equal(cpu.status().pc, 0x2000, "PC = 0x2000");
+    });
+
+    QUnit.test("JSR direct - call subroutine at direct address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x9D;      // JSR direct
+      mem[0x1001] = 0x50;
+      mem[0x0050] = 0x39;      // RTS
+
+      cpu.steps(10);
+      assert.equal(cpu.status().pc, 0x1002, "Returned to 0x1002 after RTS");
+    });
+
+    QUnit.test("JSR extended - call subroutine at 16-bit address", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0xBD;      // JSR extended
+      mem[0x1001] = 0x20;
+      mem[0x1002] = 0x00;
+      mem[0x2000] = 0x39;      // RTS
+
+      cpu.steps(12);
+      assert.equal(cpu.status().pc, 0x1003, "Returned to 0x1003 after RTS");
+    });
+  });
+
+  QUnit.module("8-bit ALU Inherent Instructions", () => {
+    QUnit.test("NEGA - Negate A", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #5
+      mem[0x1001] = 0x05;
+      mem[0x1002] = 0x40;      // NEGA
+
+      cpu.steps(4);
+      assert.equal(cpu.status().a, 0xFB, "A = -5 = 0xFB");
+    });
+
+    QUnit.test("COMA - Complement A", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #$AA
+      mem[0x1001] = 0xAA;
+      mem[0x1002] = 0x43;      // COMA
+
+      cpu.steps(4);
+      assert.equal(cpu.status().a, 0x55, "A complemented: 0xAA -> 0x55");
+    });
+
+    QUnit.test("LSRA - Logical shift right A", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #4
+      mem[0x1001] = 0x04;
+      mem[0x1002] = 0x44;      // LSRA
+
+      cpu.steps(4);
+      assert.equal(cpu.status().a, 0x02, "A shifted right: 4 -> 2");
+    });
+
+    QUnit.test("RORA - Rotate right A through carry", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #$01
+      mem[0x1001] = 0x01;
+      mem[0x1002] = 0x46;      // RORA
+
+      cpu.steps(4);
+      assert.ok(cpu.status().flags & 0x01, "Bit shifted into carry");
+      assert.equal(cpu.status().a, 0x00, "A = 0 (bit shifted out)");
+    });
+
+    QUnit.test("ASRA - Arithmetic shift right A", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #$80 (negative)
+      mem[0x1001] = 0x80;
+      mem[0x1002] = 0x47;      // ASRA
+
+      cpu.steps(4);
+      assert.equal(cpu.status().a, 0xC0, "Sign bit preserved: 0x80 -> 0xC0");
+    });
+
+    QUnit.test("ASLA - Arithmetic shift left A", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #$01
+      mem[0x1001] = 0x01;
+      mem[0x1002] = 0x48;      // ASLA
+
+      cpu.steps(4);
+      assert.equal(cpu.status().a, 0x02, "A shifted left: 1 -> 2");
+    });
+
+    QUnit.test("ROLA - Rotate left A through carry", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      // Set carry, then rotate
+      mem[0x1000] = 0x86;      // LDA #$40
+      mem[0x1001] = 0x40;
+      mem[0x1002] = 0x1A;      // ORCC
+      mem[0x1003] = 0x01;      // set C
+      mem[0x1004] = 0x49;      // ROLA
+
+      cpu.steps(7);
+      assert.equal(cpu.status().a, 0x81, "0x40 ROLA with C=1 = 0x81");
+    });
+
+    QUnit.test("DECA - Decrement A", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #5
+      mem[0x1001] = 0x05;
+      mem[0x1002] = 0x4A;      // DECA
+
+      cpu.steps(4);
+      assert.equal(cpu.status().a, 0x04, "A = 5 - 1 = 4");
+    });
+
+    QUnit.test("INCA - Increment A", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #5
+      mem[0x1001] = 0x05;
+      mem[0x1002] = 0x4C;      // INCA
+
+      cpu.steps(4);
+      assert.equal(cpu.status().a, 0x06, "A = 5 + 1 = 6");
+    });
+
+    QUnit.test("TSTA - Test A (flags only)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #0
+      mem[0x1001] = 0x00;
+      mem[0x1002] = 0x4D;      // TSTA
+
+      cpu.steps(4);
+      assert.ok(cpu.status().flags & 0x04, "Zero flag set");
+    });
+
+    QUnit.test("CLRA - Clear A", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x86;      // LDA #$FF
+      mem[0x1001] = 0xFF;
+      mem[0x1002] = 0x4F;      // CLRA
+
+      cpu.steps(4);
+      assert.equal(cpu.status().a, 0x00, "A cleared to 0");
+    });
+
+    QUnit.test("NEGB - Negate B", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0xC6;      // LDB #3
+      mem[0x1001] = 0x03;
+      mem[0x1002] = 0x50;      // NEGB
+
+      cpu.steps(4);
+      assert.equal(cpu.status().b, 0xFD, "B = -3 = 0xFD");
+    });
+
+    QUnit.test("COMB - Complement B", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0xC6;      // LDB #$0F
+      mem[0x1001] = 0x0F;
+      mem[0x1002] = 0x53;      // COMB
+
+      cpu.steps(4);
+      assert.equal(cpu.status().b, 0xF0, "B complemented: 0x0F -> 0xF0");
+    });
+
+    QUnit.test("INCB - Increment B", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0xC6;      // LDB #9
+      mem[0x1001] = 0x09;
+      mem[0x1002] = 0x5C;      // INCB
+
+      cpu.steps(4);
+      assert.equal(cpu.status().b, 0x0A, "B = 9 + 1 = 0x0A");
+    });
+
+    QUnit.test("DECB - Decrement B", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0xC6;      // LDB #9
+      mem[0x1001] = 0x09;
+      mem[0x1002] = 0x5A;      // DECB
+
+      cpu.steps(4);
+      assert.equal(cpu.status().b, 0x08, "B = 9 - 1 = 8");
+    });
+
+    QUnit.test("CLRB - Clear B", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0xC6;      // LDB #$FF
+      mem[0x1001] = 0xFF;
+      mem[0x1002] = 0x5F;      // CLRB
+
+      cpu.steps(4);
+      assert.equal(cpu.status().b, 0x00, "B cleared to 0");
     });
   });
 });
