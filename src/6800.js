@@ -602,8 +602,8 @@ export default (callbacks) => {
 
       case 0x2F: // BLE
         temp = M1();
-        // FIXED: Use bitwise operations instead of property access
-        if (((flags & FLAG_NEGATIVE) ^ (flags & FLAG_OVERFLOW)) && (flags & FLAG_ZERO)) pc += rel8(temp);
+        // BLE: Branch if less or equal (Z=1 OR (N XOR V)=1)
+        if (((flags & FLAG_NEGATIVE) ^ (flags & FLAG_OVERFLOW)) || (flags & FLAG_ZERO)) pc += rel8(temp);
         break;
 
       case 0x30: x = (sp + 1) & 0xffff; break; // TSX
@@ -730,8 +730,8 @@ export default (callbacks) => {
       case 0x6d: helperIDX((data) => { flagsNZ0(data); flags &= 0x3E; return null; }); break; // TST idx
       case 0x7d: helperEXT((data) => { flagsNZ0(data); flags &= 0x3E; return null; }); break; // TST ext
 
-      case 0x6e: // JMP idx - FIXED: use lea() to get address
-        pc = x + lea();
+      case 0x6e: // JMP idx - lea() already returns X + offset
+        pc = lea();
         break;
 
       case 0x7e: // JMP ext - FIXED: use lea() to get address
@@ -1019,6 +1019,15 @@ export default (callbacks) => {
         byteTo(sp--, pc & 0xff);
         byteTo(sp--, (pc >> 8) & 0xff);
         pc = op;
+        break;
+
+      case 0x8d: // BSR (Branch to Subroutine - relative)
+        temp = M1(); // Read offset
+        // Push return address (current PC) onto stack
+        byteTo(sp--, pc & 0xff);
+        byteTo(sp--, (pc >> 8) & 0xff);
+        // Branch to PC + relative offset
+        pc += rel8(temp);
         break;
 
       case 0x8e: // LDS imm

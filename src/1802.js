@@ -331,14 +331,12 @@ export default (callbacks) => {
         if (N === 0) {
           // IRX - Increment register X
           setRX((getRX() + 1) & 0xffff);
-        }
-        if (N < 8) {
+        } else if (N < 8) {
           // OUT 1-7
           temp = getRX();
           setRX((temp + 1) & 0xffff);
           if (portOut) portOut(N, byteAt(temp));
-        }
-        if (N > 8) {
+        } else if (N > 8) {
           // INP 1-7
           temp = portIn ? portIn(N - 8, D) : 0x00;
           byteTo(getRX(), temp);
@@ -350,9 +348,10 @@ export default (callbacks) => {
           case 0:
           case 1: // RET, DIS
             temp = byteAt(getRX());
+            const oldX = X; // Save old X before changing it
             X = (temp & 0xf0) >> 4;
             P = (temp & 0x0f);
-            setRX((getRX() + 1) & 0xffff);
+            r[oldX] = (r[oldX] + 1) & 0xffff; // Increment old RX
             IE = (N === 0) ? 1 : 0;
             break;
 

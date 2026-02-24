@@ -389,8 +389,8 @@ export default (callbacks) => {
               regs.cycles += 5;
               break;
           }
-        } else if ((i & 0xC7) === 0x03) {
-          // Return instructions
+        } else if ((i & 0x07) === 0x03) {
+          // Return instructions (including unconditional RET 0x07)
           if (condCheck(yyy)) {
             regs.pc = pop();
             regs.cycles += 5;

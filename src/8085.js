@@ -241,7 +241,8 @@ export default (callbacks) => {
     const r = calcFlags(o - 1, o, 1);
     regs.f = (regs.f & ~CARRY & 0xFF) | c;
 
-    if ((o & 0x0F) > 0) {
+    // Halfcarry on decrement: set when borrow from upper nibble (lower nibble is 0)
+    if ((o & 0x0F) === 0) {
       regs.f = regs.f | HALFCARRY;
     } else {
       regs.f &= ~HALFCARRY & 0xFF;

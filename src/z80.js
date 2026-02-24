@@ -187,7 +187,7 @@ export default (callbacks) => {
 
     // Initialize state
     regPairs[RP_PC] = 0;
-    regPairs[RP_SP] = 0xFFFF;
+    regPairs[RP_SP] = 0; // Consistent with 8080/8085
     iff1 = 0;
     iff2 = 0;
     im = 0;
@@ -2735,7 +2735,7 @@ export default (callbacks) => {
 
       case 0xD3: { // OUT (n),A
         const port = fetchByte();
-        if (portOut) portOut((regs[R_A] << 8) | port, regs[R_A]);
+        if (portOut) portOut(port, regs[R_A]);
         tstates += 11;
         break;
       }
@@ -2809,7 +2809,7 @@ export default (callbacks) => {
 
       case 0xDB: { // IN A,(n)
         const port = fetchByte();
-        if (portIn) regs[R_A] = portIn((regs[R_A] << 8) | port);
+        if (portIn) regs[R_A] = portIn(port);
         tstates += 11;
         break;
       }

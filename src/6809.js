@@ -3122,7 +3122,7 @@ IMMEDIAT_16 8
 
 let disasm = function (i, a, b, c, d, pc) {
     const toHexN = function (n, d) {
-      const s = n.toString(16);
+      let s = n.toString(16);
       while (s.length < d) {
         s = "0" + s;
       }
@@ -3136,7 +3136,7 @@ let disasm = function (i, a, b, c, d, pc) {
       return toHexN(n, 4);
     };
     var rx, ro, j;
-    const sx = ds[i];
+    let sx = ds[i];
     if (i === 0x10) {
       sx = ds10[a];
       if (sx === undefined) {
@@ -3157,9 +3157,9 @@ let disasm = function (i, a, b, c, d, pc) {
       b = c;
       c = d;
     }
-    const bytes = sx[0];
+    let bytes = sx[0];
     const mode = sx[1];
-    const mnemo = sx[2];
+    let mnemo = sx[2];
 
     switch (mode) {
       case 0: //invalid
