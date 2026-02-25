@@ -1498,6 +1498,15 @@ const dpadd = () => {
     return DP * 256 + fetch();
   };
 
+// Unary/RMW ops indexed by lower nibble (null = special case handled inline)
+const UNARY_OPS = [oNEG, null, null, oCOM, oLSR, null, oROR, oASR,
+                   oASL, oROL, oDEC, null, oINC, null, null, null];
+
+// 8-bit binary ALU ops indexed by lower nibble (null = not handled here)
+// Nibbles 1 (CMP) and 5 (BIT) have no result store and are handled separately
+const BIN8_OPS = [oSUB, null, oSBC, null, oAND, null, null, null,
+                  oEOR, oADC, oOR, oADD, null, null, null, null];
+
 const step = () => {
     const oldT = T;
 
@@ -1511,63 +1520,96 @@ const step = () => {
     const oldPC = PC;
     let opcode = fetch();
     T += cycles[opcode];
-    switch (opcode) {
-      case 0x00: //NEG DP
-        addr = dpadd();
-        byteTo(addr, oNEG(byteAt(addr)));
-        break;
-      case 0x03: //COM DP
-        addr = dpadd();
-        byteTo(addr, oCOM(byteAt(addr)));
-        break;
-      case 0x04: //LSR DP
-        addr = dpadd();
-        byteTo(addr, oLSR(byteAt(addr)));
-        break;
-      case 0x06: //ROR DP
-        addr = dpadd();
-        byteTo(addr, oROR(byteAt(addr)));
-        break;
-      case 0x07: //ASR DP
-        addr = dpadd();
-        byteTo(addr, oASR(byteAt(addr)));
-        break;
-      case 0x08: //ASL DP
-        addr = dpadd();
-        byteTo(addr, oASL(byteAt(addr)));
-        break;
-      case 0x09: //ROL DP
-        addr = dpadd();
-        byteTo(addr, oROL(byteAt(addr)));
-        break;
 
-      case 0x0a: //DEC DP
-        addr = dpadd();
-        byteTo(addr, oDEC(byteAt(addr)));
-        break;
-      case 0x0c: //INC DP
-        addr = dpadd();
-        byteTo(addr, oINC(byteAt(addr)));
-        break;
+    // Binary 8-bit ALU: A-reg (0x80-0xBF) or B-reg (0xC0-0xFF)
+    // Handles parallel nibbles: 0,1,2,4,5,6,7,8,9,A,B
+    if (opcode >= 0x80) {
+      const lo = opcode & 0xF;
+      const isB = opcode >= 0xC0;
+      const mode = (opcode >> 4) & 3;   // 0=imm, 1=dp, 2=idx, 3=ext
 
-      case 0x0d: //TST DP
-        addr = dpadd();
-        pb = byteAt(addr);
+      // Standard parallel ALU ops (nibbles 0,1,2,4,5,8,9,A,B)
+      if (lo <= 0xB && lo !== 3 && lo !== 6 && lo !== 7) {
+        const val = mode === 0 ? fetch()
+                  : mode === 1 ? byteAt(dpadd())
+                  : mode === 2 ? byteAt(PostByte())
+                  : byteAt(fetch16());
+        if (lo === 1) {                              // CMP - no store
+          oCMP(isB ? rB : rA, val);
+        } else if (lo === 5) {                       // BIT - no store
+          oAND(isB ? rB : rA, val);
+        } else {
+          if (isB) rB = BIN8_OPS[lo](rB, val);
+          else     rA = BIN8_OPS[lo](rA, val);
+        }
+        return T - oldT;
+      }
+
+      // LDA/LDB (nibble 6)
+      if (lo === 6) {
+        const val = mode === 0 ? fetch()
+                  : mode === 1 ? byteAt(dpadd())
+                  : mode === 2 ? byteAt(PostByte())
+                  : byteAt(fetch16());
+        if (isB) rB = val; else rA = val;
         CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[pb];
-        break;
+        CC |= flagsNZ[isB ? rB : rA];
+        return T - oldT;
+      }
 
-      case 0x0e: //JMP DP
-        addr = dpadd();
-        PC = addr;
-        break;
-      case 0x0f: //CLR DP
-        addr = dpadd();
+      // STA/STB (nibble 7, only for memory modes — no STA/STB imm)
+      if (lo === 7 && mode !== 0) {
+        addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
+        const reg = isB ? rB : rA;
+        byteTo(addr, reg);
+        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+        CC |= flagsNZ[reg];
+        return T - oldT;
+      }
+
+      // Fall through to switch for irregular nibbles: 3, C, D, E, F
+    }
+
+    // Inherent unary on A (0x40-0x4F) or B (0x50-0x5F)
+    if (opcode >= 0x40 && opcode < 0x60) {
+      const lo = opcode & 0xF;
+      const isB = opcode >= 0x50;
+      if (UNARY_OPS[lo]) {
+        if (isB) rB = UNARY_OPS[lo](rB); else rA = UNARY_OPS[lo](rA);
+      } else if (lo === 0xD) {                      // TST A/B
+        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+        CC |= flagsNZ[isB ? rB : rA];
+      } else if (lo === 0xF) {                      // CLR A/B
+        if (isB) rB = 0; else rA = 0;
+        CC &= ~(F_NEGATIVE | F_OVERFLOW | F_CARRY);
+        CC |= F_ZERO;
+      }
+      return T - oldT;
+    }
+
+    // RMW: DP (0x00-0x0F), Indexed (0x60-0x6F), Extended (0x70-0x7F)
+    if (opcode < 0x10 || (opcode >= 0x60 && opcode < 0x80)) {
+      const lo = opcode & 0xF;
+      const addrFn = opcode < 0x10 ? dpadd : opcode < 0x70 ? PostByte : fetch16;
+      if (UNARY_OPS[lo]) {
+        addr = addrFn();
+        byteTo(addr, UNARY_OPS[lo](byteAt(addr)));
+      } else if (lo === 0xD) {                      // TST
+        addr = addrFn();
+        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+        CC |= flagsNZ[byteAt(addr)];
+      } else if (lo === 0xE) {                      // JMP
+        PC = addrFn();
+      } else if (lo === 0xF) {                      // CLR
+        addr = addrFn();
         byteTo(addr, 0);
         CC &= ~(F_CARRY | F_NEGATIVE | F_OVERFLOW);
         CC |= F_ZERO;
-        break;
+      }
+      return T - oldT;
+    }
 
+    switch (opcode) {
       case 0x12: //NOP
         break;
       case 0x13: //SYNC
@@ -1757,228 +1799,10 @@ const step = () => {
         PC = ReadWord(vecSWI);
         break;
 
-      case 0x40:
-        rA = oNEG(rA);
-        break;
-      case 0x43:
-        rA = oCOM(rA);
-        break;
-      case 0x44:
-        rA = oLSR(rA);
-        break;
-      case 0x46:
-        rA = oROR(rA);
-        break;
-      case 0x47:
-        rA = oASR(rA);
-        break;
-      case 0x48:
-        rA = oASL(rA);
-        break;
-      case 0x49:
-        rA = oROL(rA);
-        break;
-      case 0x4a:
-        rA = oDEC(rA);
-        break;
-      case 0x4c:
-        rA = oINC(rA);
-        break;
-      case 0x4d:
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rA];
-        break;
-      case 0x4f:
-        rA = 0;
-        CC &= ~(F_NEGATIVE | F_OVERFLOW | F_CARRY);
-        CC |= F_ZERO;
-        break;
-
-      case 0x50:
-        rB = oNEG(rB);
-        break;
-      case 0x53:
-        rB = oCOM(rB);
-        break;
-      case 0x54:
-        rB = oLSR(rB);
-        break;
-      case 0x56:
-        rB = oROR(rB);
-        break;
-      case 0x57:
-        rB = oASR(rB);
-        break;
-      case 0x58:
-        rB = oASL(rB);
-        break;
-      case 0x59:
-        rB = oROL(rB);
-        break;
-      case 0x5a:
-        rB = oDEC(rB);
-        break;
-      case 0x5c:
-        rB = oINC(rB);
-        break;
-      case 0x5d:
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rB];
-        break;
-      case 0x5f:
-        rB = 0;
-        CC &= ~(F_NEGATIVE | F_OVERFLOW | F_CARRY);
-        CC |= F_ZERO;
-        break;
-
-      case 0x60: //NEG indexed
-        addr = PostByte();
-        byteTo(addr, oNEG(byteAt(addr)));
-        break;
-      case 0x63: //COM indexed
-        addr = PostByte();
-        byteTo(addr, oCOM(byteAt(addr)));
-        break;
-      case 0x64: //LSR indexed
-        addr = PostByte();
-        byteTo(addr, oLSR(byteAt(addr)));
-        break;
-      case 0x66: //ROR indexed
-        addr = PostByte();
-        byteTo(addr, oROR(byteAt(addr)));
-        break;
-      case 0x67: //ASR indexed
-        addr = PostByte();
-        byteTo(addr, oASR(byteAt(addr)));
-        break;
-      case 0x68: //ASL indexed
-        addr = PostByte();
-        byteTo(addr, oASL(byteAt(addr)));
-        break;
-      case 0x69: //ROL indexed
-        addr = PostByte();
-        byteTo(addr, oROL(byteAt(addr)));
-        break;
-
-      case 0x6a: //DEC indexed
-        addr = PostByte();
-        byteTo(addr, oDEC(byteAt(addr)));
-        break;
-      case 0x6c: //INC indexed
-        addr = PostByte();
-        byteTo(addr, oINC(byteAt(addr)));
-        break;
-
-      case 0x6d: //TST indexed
-        addr = PostByte();
-        pb = byteAt(addr);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[pb];
-        break;
-
-      case 0x6e: //JMP indexed
-        addr = PostByte();
-        PC = addr;
-        break;
-      case 0x6f: //CLR indexed
-        addr = PostByte();
-        byteTo(addr, 0);
-        CC &= ~(F_CARRY | F_NEGATIVE | F_OVERFLOW);
-        CC |= F_ZERO;
-        break;
-
-      case 0x70: //NEG extended
-        addr = fetch16();
-        byteTo(addr, oNEG(byteAt(addr)));
-        break;
-      case 0x73: //COM extended
-        addr = fetch16();
-        byteTo(addr, oCOM(byteAt(addr)));
-        break;
-      case 0x74: //LSR extended
-        addr = fetch16();
-        byteTo(addr, oLSR(byteAt(addr)));
-        break;
-      case 0x76: //ROR extended
-        addr = fetch16();
-        byteTo(addr, oROR(byteAt(addr)));
-        break;
-      case 0x77: //ASR extended
-        addr = fetch16();
-        byteTo(addr, oASR(byteAt(addr)));
-        break;
-      case 0x78: //ASL extended
-        addr = fetch16();
-        byteTo(addr, oASL(byteAt(addr)));
-        break;
-      case 0x79: //ROL extended
-        addr = fetch16();
-        byteTo(addr, oROL(byteAt(addr)));
-        break;
-
-      case 0x7a: //DEC extended
-        addr = fetch16();
-        byteTo(addr, oDEC(byteAt(addr)));
-        break;
-      case 0x7c: //INC extended
-        addr = fetch16();
-        byteTo(addr, oINC(byteAt(addr)));
-        break;
-
-      case 0x7d: //TST extended
-        addr = fetch16();
-        pb = byteAt(addr);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[pb];
-        break;
-
-      case 0x7e: //JMP extended
-        addr = fetch16();
-        PC = addr;
-        break;
-      case 0x7f: //CLR extended
-        addr = fetch16();
-        byteTo(addr, 0);
-        CC &= ~(F_CARRY | F_NEGATIVE | F_OVERFLOW);
-        CC |= F_ZERO;
-        break;
-
       // regs A,X
 
-      case 0x80: //SUBA imm
-        rA = oSUB(rA, fetch());
-        break;
-      case 0x81: //CMPA imm
-        oCMP(rA, fetch());
-        break;
-      case 0x82: //SBCA imm
-        rA = oSBC(rA, fetch());
-        break;
       case 0x83: //SUBD imm
         setD(oSUB16(getD(), fetch16()));
-        break;
-      case 0x84: //ANDA imm
-        rA = oAND(rA, fetch());
-        break;
-      case 0x85: //BITA imm
-        oAND(rA, fetch());
-        break;
-      case 0x86: //LDA imm
-        rA = fetch();
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rA];
-        break;
-      case 0x88: //EORA imm
-        rA = oEOR(rA, fetch());
-        break;
-      case 0x89: //ADCA imm
-        rA = oADC(rA, fetch());
-        break;
-      case 0x8a: //ORA imm
-        rA = oOR(rA, fetch());
-        break;
-      case 0x8b: //ADDA imm
-        rA = oADD(rA, fetch());
         break;
       case 0x8c: //CMPX imm
         oCMP16(rX, fetch16());
@@ -1995,57 +1819,9 @@ const step = () => {
         CC &= ~F_OVERFLOW;
         break;
 
-      case 0x90: //SUBA direct
-        addr = dpadd();
-        rA = oSUB(rA, byteAt(addr));
-        break;
-      case 0x91: //CMPA direct
-        addr = dpadd();
-        oCMP(rA, byteAt(addr));
-        break;
-      case 0x92: //SBCA direct
-        addr = dpadd();
-        rA = oSBC(rA, byteAt(addr));
-        break;
       case 0x93: //SUBD direct
         addr = dpadd();
         setD(oSUB16(getD(), ReadWord(addr)));
-        break;
-      case 0x94: //ANDA direct
-        addr = dpadd();
-        rA = oAND(rA, byteAt(addr));
-        break;
-      case 0x95: //BITA direct
-        addr = dpadd();
-        oAND(rA, byteAt(addr));
-        break;
-      case 0x96: //LDA direct
-        addr = dpadd();
-        rA = byteAt(addr);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rA];
-        break;
-      case 0x97: //STA direct
-        addr = dpadd();
-        byteTo(addr, rA);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rA];
-        break;
-      case 0x98: //EORA direct
-        addr = dpadd();
-        rA = oEOR(rA, byteAt(addr));
-        break;
-      case 0x99: //ADCA direct
-        addr = dpadd();
-        rA = oADC(rA, byteAt(addr));
-        break;
-      case 0x9a: //ORA direct
-        addr = dpadd();
-        rA = oOR(rA, byteAt(addr));
-        break;
-      case 0x9b: //ADDA direct
-        addr = dpadd();
-        rA = oADD(rA, byteAt(addr));
         break;
       case 0x9c: //CMPX direct
         addr = dpadd();
@@ -2069,57 +1845,9 @@ const step = () => {
         flagsNZ16(rX);
         CC &= ~F_OVERFLOW;
         break;
-      case 0xa0: //SUBA indexed
-        addr = PostByte();
-        rA = oSUB(rA, byteAt(addr));
-        break;
-      case 0xa1: //CMPA indexed
-        addr = PostByte();
-        oCMP(rA, byteAt(addr));
-        break;
-      case 0xa2: //SBCA indexed
-        addr = PostByte();
-        rA = oSBC(rA, byteAt(addr));
-        break;
       case 0xa3: //SUBD indexed
         addr = PostByte();
         setD(oSUB16(getD(), ReadWord(addr)));
-        break;
-      case 0xa4: //ANDA indexed
-        addr = PostByte();
-        rA = oAND(rA, byteAt(addr));
-        break;
-      case 0xa5: //BITA indexed
-        addr = PostByte();
-        oAND(rA, byteAt(addr));
-        break;
-      case 0xa6: //LDA indexed
-        addr = PostByte();
-        rA = byteAt(addr);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rA];
-        break;
-      case 0xa7: //STA indexed
-        addr = PostByte();
-        byteTo(addr, rA);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rA];
-        break;
-      case 0xa8: //EORA indexed
-        addr = PostByte();
-        rA = oEOR(rA, byteAt(addr));
-        break;
-      case 0xa9: //ADCA indexed
-        addr = PostByte();
-        rA = oADC(rA, byteAt(addr));
-        break;
-      case 0xaa: //ORA indexed
-        addr = PostByte();
-        rA = oOR(rA, byteAt(addr));
-        break;
-      case 0xab: //ADDA indexed
-        addr = PostByte();
-        rA = oADD(rA, byteAt(addr));
         break;
       case 0xac: //CMPX indexed
         addr = PostByte();
@@ -2144,57 +1872,9 @@ const step = () => {
         CC &= ~F_OVERFLOW;
         break;
 
-      case 0xb0: //SUBA extended
-        addr = fetch16();
-        rA = oSUB(rA, byteAt(addr));
-        break;
-      case 0xb1: //CMPA extended
-        addr = fetch16();
-        oCMP(rA, byteAt(addr));
-        break;
-      case 0xb2: //SBCA extended
-        addr = fetch16();
-        rA = oSBC(rA, byteAt(addr));
-        break;
       case 0xb3: //SUBD extended
         addr = fetch16();
         setD(oSUB16(getD(), ReadWord(addr)));
-        break;
-      case 0xb4: //ANDA extended
-        addr = fetch16();
-        rA = oAND(rA, byteAt(addr));
-        break;
-      case 0xb5: //BITA extended
-        addr = fetch16();
-        oAND(rA, byteAt(addr));
-        break;
-      case 0xb6: //LDA extended
-        addr = fetch16();
-        rA = byteAt(addr);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rA];
-        break;
-      case 0xb7: //STA extended
-        addr = fetch16();
-        byteTo(addr, rA);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rA];
-        break;
-      case 0xb8: //EORA extended
-        addr = fetch16();
-        rA = oEOR(rA, byteAt(addr));
-        break;
-      case 0xb9: //ADCA extended
-        addr = fetch16();
-        rA = oADC(rA, byteAt(addr));
-        break;
-      case 0xba: //ORA extended
-        addr = fetch16();
-        rA = oOR(rA, byteAt(addr));
-        break;
-      case 0xbb: //ADDA extended
-        addr = fetch16();
-        rA = oADD(rA, byteAt(addr));
         break;
       case 0xbc: //CMPX extended
         addr = fetch16();
@@ -2221,40 +1901,8 @@ const step = () => {
 
       //Regs B, Y
 
-      case 0xc0: //SUBB imm
-        rB = oSUB(rB, fetch());
-        break;
-      case 0xc1: //CMPB imm
-        oCMP(rB, fetch());
-        break;
-      case 0xc2: //SBCB imm
-        rB = oSBC(rB, fetch());
-        break;
       case 0xc3: //ADDD imm
         setD(oADD16(getD(), fetch16()));
-        break;
-      case 0xc4: //ANDB imm
-        rB = oAND(rB, fetch());
-        break;
-      case 0xc5: //BITB imm
-        oAND(rB, fetch());
-        break;
-      case 0xc6: //LDB imm
-        rB = fetch();
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rB];
-        break;
-      case 0xc8: //EORB imm
-        rB = oEOR(rB, fetch());
-        break;
-      case 0xc9: //ADCB imm
-        rB = oADC(rB, fetch());
-        break;
-      case 0xca: //ORB imm
-        rB = oOR(rB, fetch());
-        break;
-      case 0xcb: //ADDB imm
-        rB = oADD(rB, fetch());
         break;
       case 0xcc: //LDD imm
         addr = fetch16();
@@ -2269,57 +1917,9 @@ const step = () => {
         CC &= ~F_OVERFLOW;
         break;
 
-      case 0xd0: //SUBB direct
-        addr = dpadd();
-        rB = oSUB(rB, byteAt(addr));
-        break;
-      case 0xd1: //CMPB direct
-        addr = dpadd();
-        oCMP(rB, byteAt(addr));
-        break;
-      case 0xd2: //SBCB direct
-        addr = dpadd();
-        rB = oSBC(rB, byteAt(addr));
-        break;
       case 0xd3: //ADDD direct
         addr = dpadd();
         setD(oADD16(getD(), ReadWord(addr)));
-        break;
-      case 0xd4: //ANDB direct
-        addr = dpadd();
-        rB = oAND(rB, byteAt(addr));
-        break;
-      case 0xd5: //BITB direct
-        addr = dpadd();
-        oAND(rB, byteAt(addr));
-        break;
-      case 0xd6: //LDB direct
-        addr = dpadd();
-        rB = byteAt(addr);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rB];
-        break;
-      case 0xd7: //STB direct
-        addr = dpadd();
-        byteTo(addr, rB);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rB];
-        break;
-      case 0xd8: //EORB direct
-        addr = dpadd();
-        rB = oEOR(rB, byteAt(addr));
-        break;
-      case 0xd9: //ADCB direct
-        addr = dpadd();
-        rB = oADC(rB, byteAt(addr));
-        break;
-      case 0xda: //ORB direct
-        addr = dpadd();
-        rB = oOR(rB, byteAt(addr));
-        break;
-      case 0xdb: //ADDB direct
-        addr = dpadd();
-        rB = oADD(rB, byteAt(addr));
         break;
       case 0xdc: //LDD direct
         addr = dpadd();
@@ -2346,57 +1946,9 @@ const step = () => {
         flagsNZ16(rU);
         CC &= ~F_OVERFLOW;
         break;
-      case 0xe0: //SUBB indexed
-        addr = PostByte();
-        rB = oSUB(rB, byteAt(addr));
-        break;
-      case 0xe1: //CMPB indexed
-        addr = PostByte();
-        oCMP(rB, byteAt(addr));
-        break;
-      case 0xe2: //SBCB indexed
-        addr = PostByte();
-        rB = oSBC(rB, byteAt(addr));
-        break;
       case 0xe3: //ADDD indexed
         addr = PostByte();
         setD(oADD16(getD(), ReadWord(addr)));
-        break;
-      case 0xe4: //ANDB indexed
-        addr = PostByte();
-        rB = oAND(rB, byteAt(addr));
-        break;
-      case 0xe5: //BITB indexed
-        addr = PostByte();
-        oAND(rB, byteAt(addr));
-        break;
-      case 0xe6: //LDB indexed
-        addr = PostByte();
-        rB = byteAt(addr);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rB];
-        break;
-      case 0xe7: //STB indexed
-        addr = PostByte();
-        byteTo(addr, rB);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rB];
-        break;
-      case 0xe8: //EORB indexed
-        addr = PostByte();
-        rB = oEOR(rB, byteAt(addr));
-        break;
-      case 0xe9: //ADCB indexed
-        addr = PostByte();
-        rB = oADC(rB, byteAt(addr));
-        break;
-      case 0xea: //ORB indexed
-        addr = PostByte();
-        rB = oOR(rB, byteAt(addr));
-        break;
-      case 0xeb: //ADDB indexed
-        addr = PostByte();
-        rB = oADD(rB, byteAt(addr));
         break;
       case 0xec: //LDD indexed
         addr = PostByte();
@@ -2424,57 +1976,9 @@ const step = () => {
         CC &= ~F_OVERFLOW;
         break;
 
-      case 0xf0: //SUBB extended
-        addr = fetch16();
-        rB = oSUB(rB, byteAt(addr));
-        break;
-      case 0xf1: //CMPB extended
-        addr = fetch16();
-        oCMP(rB, byteAt(addr));
-        break;
-      case 0xf2: //SBCB extended
-        addr = fetch16();
-        rB = oSBC(rB, byteAt(addr));
-        break;
       case 0xf3: //ADDD extended
         addr = fetch16();
         setD(oADD16(getD(), ReadWord(addr)));
-        break;
-      case 0xf4: //ANDB extended
-        addr = fetch16();
-        rB = oAND(rB, byteAt(addr));
-        break;
-      case 0xf5: //BITB extended
-        addr = fetch16();
-        oAND(rB, byteAt(addr));
-        break;
-      case 0xf6: //LDB extended
-        addr = fetch16();
-        rB = byteAt(addr);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rB];
-        break;
-      case 0xf7: //STB extended
-        addr = fetch16();
-        byteTo(addr, rB);
-        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
-        CC |= flagsNZ[rB];
-        break;
-      case 0xf8: //EORB extended
-        addr = fetch16();
-        rB = oEOR(rB, byteAt(addr));
-        break;
-      case 0xf9: //ADCB extended
-        addr = fetch16();
-        rB = oADC(rB, byteAt(addr));
-        break;
-      case 0xfa: //ORB extended
-        addr = fetch16();
-        rB = oOR(rB, byteAt(addr));
-        break;
-      case 0xfb: //ADDB extended
-        addr = fetch16();
-        rB = oADD(rB, byteAt(addr));
         break;
       case 0xfc: //LDD extended
         addr = fetch16();
