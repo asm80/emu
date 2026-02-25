@@ -1567,7 +1567,60 @@ const step = () => {
         return T - oldT;
       }
 
-      // Fall through to switch for irregular nibbles: 3, C, D, E, F
+      // Helper: read 16-bit operand for the current addressing mode
+      const readVal = () => mode === 0 ? fetch16()
+        : ReadWord(mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16());
+
+      // Nibble 3: SUBD (A-side) or ADDD (B-side)
+      if (lo === 3) {
+        if (isB) setD(oADD16(getD(), readVal()));
+        else     setD(oSUB16(getD(), readVal()));
+        return T - oldT;
+      }
+
+      // Nibble C: CMPX (A-side) or LDD (B-side)
+      if (lo === 0xC) {
+        const val = readVal();
+        if (isB) { setD(val); flagsNZ16(val); CC &= ~F_OVERFLOW; }
+        else       oCMP16(rX, val);
+        return T - oldT;
+      }
+
+      // Nibble D: JSR/BSR (A-side) or STD (B-side, no imm)
+      // NOTE: STD sets only ~F_OVERFLOW — preserving original behavior (no flagsNZ16 call)
+      if (lo === 0xD) {
+        if (isB) {
+          if (mode !== 0) {
+            addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
+            WriteWord(addr, getD());
+            CC &= ~F_OVERFLOW;
+          }
+        } else if (mode === 0) {                   // BSR (signed 8-bit offset)
+          addr = signed(fetch()); PUSHW(PC); PC += addr;
+        } else {                                   // JSR
+          addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
+          PUSHW(PC); PC = addr;
+        }
+        return T - oldT;
+      }
+
+      // Nibble E: LDX (A-side) or LDU (B-side)
+      // FIX: LDU direct (0xDE) had flagsNZ16(rX) — corrected to flagsNZ16(rU)
+      if (lo === 0xE) {
+        const val = readVal();
+        if (isB) rU = val; else rX = val;
+        flagsNZ16(isB ? rU : rX);
+        CC &= ~F_OVERFLOW;
+        return T - oldT;
+      }
+
+      // Nibble F: STX (A-side) or STU (B-side) — no imm mode
+      if (lo === 0xF && mode !== 0) {
+        addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
+        const val = isB ? rU : rX;
+        WriteWord(addr, val); flagsNZ16(val); CC &= ~F_OVERFLOW;
+        return T - oldT;
+      }
     }
 
     // Inherent unary on A (0x40-0x4F) or B (0x50-0x5F)
@@ -1799,218 +1852,44 @@ const step = () => {
         PC = ReadWord(vecSWI);
         break;
 
-      // regs A,X
-
-      case 0x83: //SUBD imm
-        setD(oSUB16(getD(), fetch16()));
-        break;
-      case 0x8c: //CMPX imm
-        oCMP16(rX, fetch16());
-        break;
-
-      case 0x8d: //JSR imm
-        addr = signed(fetch());
-        PUSHW(PC);
-        PC += addr;
-        break;
-      case 0x8e: //LDX imm
-        rX = fetch16();
-        flagsNZ16(rX);
-        CC &= ~F_OVERFLOW;
-        break;
-
-      case 0x93: //SUBD direct
-        addr = dpadd();
-        setD(oSUB16(getD(), ReadWord(addr)));
-        break;
-      case 0x9c: //CMPX direct
-        addr = dpadd();
-        oCMP16(rX, ReadWord(addr));
-        break;
-
-      case 0x9d: //JSR direct
-        addr = dpadd();
-        PUSHW(PC);
-        PC = addr;
-        break;
-      case 0x9e: //LDX direct
-        addr = dpadd();
-        rX = ReadWord(addr);
-        flagsNZ16(rX);
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0x9f: //STX direct
-        addr = dpadd();
-        WriteWord(addr, rX);
-        flagsNZ16(rX);
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xa3: //SUBD indexed
-        addr = PostByte();
-        setD(oSUB16(getD(), ReadWord(addr)));
-        break;
-      case 0xac: //CMPX indexed
-        addr = PostByte();
-        oCMP16(rX, ReadWord(addr));
-        break;
-
-      case 0xad: //JSR indexed
-        addr = PostByte();
-        PUSHW(PC);
-        PC = addr;
-        break;
-      case 0xae: //LDX indexed
-        addr = PostByte();
-        rX = ReadWord(addr);
-        flagsNZ16(rX);
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xaf: //STX indexed
-        addr = PostByte();
-        WriteWord(addr, rX);
-        flagsNZ16(rX);
-        CC &= ~F_OVERFLOW;
-        break;
-
-      case 0xb3: //SUBD extended
-        addr = fetch16();
-        setD(oSUB16(getD(), ReadWord(addr)));
-        break;
-      case 0xbc: //CMPX extended
-        addr = fetch16();
-        oCMP16(rX, ReadWord(addr));
-        break;
-
-      case 0xbd: //JSR extended
-        addr = fetch16();
-        PUSHW(PC);
-        PC = addr;
-        break;
-      case 0xbe: //LDX extended
-        addr = fetch16();
-        rX = ReadWord(addr);
-        flagsNZ16(rX);
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xbf: //STX extended
-        addr = fetch16();
-        WriteWord(addr, rX);
-        flagsNZ16(rX);
-        CC &= ~F_OVERFLOW;
-        break;
-
-      //Regs B, Y
-
-      case 0xc3: //ADDD imm
-        setD(oADD16(getD(), fetch16()));
-        break;
-      case 0xcc: //LDD imm
-        addr = fetch16();
-        setD(addr);
-        flagsNZ16(addr);
-        CC &= ~F_OVERFLOW;
-        break;
-
-      case 0xce: //LDU imm
-        rU = fetch16();
-        flagsNZ16(rU);
-        CC &= ~F_OVERFLOW;
-        break;
-
-      case 0xd3: //ADDD direct
-        addr = dpadd();
-        setD(oADD16(getD(), ReadWord(addr)));
-        break;
-      case 0xdc: //LDD direct
-        addr = dpadd();
-        pb = ReadWord(addr);
-        setD(pb);
-        flagsNZ16(pb);
-        CC &= ~F_OVERFLOW;
-        break;
-
-      case 0xdd: //STD direct
-        addr = dpadd();
-        WriteWord(addr, getD());
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xde: //LDU direct
-        addr = dpadd();
-        rU = ReadWord(addr);
-        flagsNZ16(rX);
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xdf: //STU direct
-        addr = dpadd();
-        WriteWord(addr, rU);
-        flagsNZ16(rU);
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xe3: //ADDD indexed
-        addr = PostByte();
-        setD(oADD16(getD(), ReadWord(addr)));
-        break;
-      case 0xec: //LDD indexed
-        addr = PostByte();
-        pb = ReadWord(addr);
-        setD(pb);
-        flagsNZ16(pb);
-        CC &= ~F_OVERFLOW;
-        break;
-
-      case 0xed: //STD indexed
-        addr = PostByte();
-        WriteWord(addr, getD());
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xee: //LDU indexed
-        addr = PostByte();
-        rU = ReadWord(addr);
-        flagsNZ16(rU);
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xef: //STU indexed
-        addr = PostByte();
-        WriteWord(addr, rU);
-        flagsNZ16(rU);
-        CC &= ~F_OVERFLOW;
-        break;
-
-      case 0xf3: //ADDD extended
-        addr = fetch16();
-        setD(oADD16(getD(), ReadWord(addr)));
-        break;
-      case 0xfc: //LDD extended
-        addr = fetch16();
-        pb = ReadWord(addr);
-        setD(pb);
-        flagsNZ16(pb);
-        CC &= ~F_OVERFLOW;
-        break;
-
-      case 0xfd: //STD extended
-        addr = fetch16();
-        WriteWord(addr, getD());
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xfe: //LDU extended
-        addr = fetch16();
-        rU = ReadWord(addr);
-        flagsNZ16(rU);
-        CC &= ~F_OVERFLOW;
-        break;
-      case 0xff: //STU extended
-        addr = fetch16();
-        WriteWord(addr, rU);
-        flagsNZ16(rU);
-        CC &= ~F_OVERFLOW;
-        break;
-
       // page 1
       case 0x10: //page 1
         {
           opcode = fetch();
           T += cycles2[opcode];
+
+          // Dispatch 16-bit register ops in page 1 prefix
+          if (opcode >= 0x80) {
+            const lo = opcode & 0xF;
+            const isB = opcode >= 0xC0;
+            const mode = (opcode >> 4) & 3;
+            const readVal = () => mode === 0 ? fetch16()
+              : ReadWord(mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16());
+
+            if (lo === 3) {                            // CMPD (A-side only)
+              if (!isB) oCMP16(getD(), readVal());
+              return T - oldT;
+            }
+            if (lo === 0xC) {                          // CMPY (A-side only)
+              if (!isB) oCMP16(rY, readVal());
+              return T - oldT;
+            }
+            if (lo === 0xE) {                          // LDY (A-side) or LDS (B-side)
+              const val = readVal();
+              if (isB) rS = val; else rY = val;
+              flagsNZ16(isB ? rS : rY);
+              CC &= ~F_OVERFLOW;
+              return T - oldT;
+            }
+            if (lo === 0xF && mode !== 0) {            // STY (A-side) or STS (B-side)
+              addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
+              WriteWord(addr, isB ? rS : rY);
+              flagsNZ16(isB ? rS : rY);
+              CC &= ~F_OVERFLOW;
+              return T - oldT;
+            }
+          }
+
           switch (opcode) {
             case 0x21: //BRN
               addr = signed16(fetch16());
@@ -2089,118 +1968,6 @@ const step = () => {
               CC |= F_IRQMASK | F_FIRQMASK;
               PC = ReadWord(vecSWI2);
               break;
-            case 0x83: //CMPD imm
-              oCMP16(getD(), fetch16());
-              break;
-            case 0x8c: //CMPY imm
-              oCMP16(rY, fetch16());
-              break;
-            case 0x8e: //LDY imm
-              rY = fetch16();
-              flagsNZ16(rY);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0x93: //CMPD direct
-              addr = dpadd();
-              oCMP16(getD(), ReadWord(addr));
-              break;
-            case 0x9c: //CMPY direct
-              addr = dpadd();
-              oCMP16(rY, ReadWord(addr));
-              break;
-            case 0x9e: //LDY direct
-              addr = dpadd();
-              rY = ReadWord(addr);
-              flagsNZ16(rY);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0x9f: //STY direct
-              addr = dpadd();
-              WriteWord(addr, rY);
-              flagsNZ16(rY);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xa3: //CMPD indexed
-              addr = PostByte();
-              oCMP16(getD(), ReadWord(addr));
-              break;
-            case 0xac: //CMPY indexed
-              addr = PostByte();
-              oCMP16(rY, ReadWord(addr));
-              break;
-            case 0xae: //LDY indexed
-              addr = PostByte();
-              rY = ReadWord(addr);
-              flagsNZ16(rY);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xaf: //STY indexed
-              addr = PostByte();
-              WriteWord(addr, rY);
-              flagsNZ16(rY);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xb3: //CMPD extended
-              addr = fetch16();
-              oCMP16(getD(), ReadWord(addr));
-              break;
-            case 0xbc: //CMPY extended
-              addr = fetch16();
-              oCMP16(rY, ReadWord(addr));
-              break;
-            case 0xbe: //LDY extended
-              addr = fetch16();
-              rY = ReadWord(addr);
-              flagsNZ16(rY);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xbf: //STY extended
-              addr = fetch16();
-              WriteWord(addr, rY);
-              flagsNZ16(rY);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xce: //LDS imm
-              rS = fetch16();
-              flagsNZ16(rS);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xde: //LDS direct
-              addr = dpadd();
-              rS = ReadWord(addr);
-              flagsNZ16(rS);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xdf: //STS direct
-              addr = dpadd();
-              WriteWord(addr, rS);
-              flagsNZ16(rS);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xee: //LDS indexed
-              addr = PostByte();
-              rS = ReadWord(addr);
-              flagsNZ16(rS);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xef: //STS indexed
-              addr = PostByte();
-              WriteWord(addr, rS);
-              flagsNZ16(rS);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xfe: //LDS extended
-              addr = fetch16();
-              rS = ReadWord(addr);
-              flagsNZ16(rS);
-              CC &= ~F_OVERFLOW;
-              break;
-            case 0xff: //STS extended
-              addr = fetch16();
-              WriteWord(addr, rS);
-              flagsNZ16(rS);
-              CC &= ~F_OVERFLOW;
-              break;
           }
         }
         break;
@@ -2209,6 +1976,18 @@ const step = () => {
         {
           opcode = fetch();
           T += cycles2[opcode];
+
+          // Dispatch 16-bit compare ops in page 2 prefix
+          if (opcode >= 0x80) {
+            const lo = opcode & 0xF;
+            const mode = (opcode >> 4) & 3;
+            const readVal = () => mode === 0 ? fetch16()
+              : ReadWord(mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16());
+
+            if (lo === 3) { oCMP16(rU, readVal()); return T - oldT; }  // CMPU
+            if (lo === 0xC) { oCMP16(rS, readVal()); return T - oldT; } // CMPS
+          }
+
           switch (opcode) {
             case 0x3f: //SWI3
               CC |= F_ENTIRE;
@@ -2222,36 +2001,6 @@ const step = () => {
               PUSHB(CC);
               CC |= F_IRQMASK | F_FIRQMASK;
               PC = ReadWord(vecSWI3);
-              break;
-            case 0x83: //CMPU imm
-              oCMP16(rU, fetch16());
-              break;
-            case 0x8c: //CMPS imm
-              oCMP16(rS, fetch16());
-              break;
-            case 0x93: //CMPU imm
-              addr = dpadd();
-              oCMP16(rU, ReadWord(addr));
-              break;
-            case 0x9c: //CMPS imm
-              addr = dpadd();
-              oCMP16(rS, ReadWord(addr));
-              break;
-            case 0xa3: //CMPU imm
-              addr = PostByte();
-              oCMP16(rU, ReadWord(addr));
-              break;
-            case 0xac: //CMPS imm
-              addr = PostByte();
-              oCMP16(rS, ReadWord(addr));
-              break;
-            case 0xb3: //CMPU imm
-              addr = fetch16();
-              oCMP16(rU, ReadWord(addr));
-              break;
-            case 0xbc: //CMPS imm
-              addr = fetch16();
-              oCMP16(rS, ReadWord(addr));
               break;
           }
         }
