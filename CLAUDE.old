@@ -1,0 +1,179 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Language Requirements
+**IMPORTANT**: All documentation, error messages, function names, literals, and code comments in this project must be in English. This overrides any global language preferences.
+
+## Project Overview
+ASM80 Emulator is a **multi-CPU emulator and debugger** for vintage processors. Part of the ASM80 toolchain ecosystem (works with @asm80/core assembler).
+
+**NPM package**: `@asm80/emu`
+
+## Common Commands
+
+### Testing
+```bash
+npm test                    # Run tests with coverage
+npm run test:run            # Run tests without coverage report
+npm run test:report         # Generate HTML coverage report
+npm run test:report:text    # Generate text coverage report
+```
+
+Tests use QUnit framework, coverage via c8. Reports saved to `coverage/` folder.
+
+### Publishing
+```bash
+npm run pub                 # Bump version, push tags, publish to npm
+```
+
+### Development
+```bash
+node                        # REPL for testing ES6 modules
+```
+
+## Project Architecture
+
+### Current State
+Project has **completed migration** of all major CPUs from legacy to modern ES6 modules:
+- `old/` - Legacy emulator implementations (2013-2021 codebase, kept for reference)
+- `src/` - Modern ES6 module implementations (✓ Complete)
+- `test/` - Comprehensive QUnit test suite
+
+### Supported CPUs (Modern ES6)
+All major 8-bit CPUs have been modernized:
+- **Z80** (`z80.js`) - ✅ Zilog Z80 with full instruction set, all prefixes (CB/DD/ED/FD/DDCB/FDCB)
+- **8080** (`8080.js`) - ✅ Intel 8080 with hardware-accurate flags
+- **8085** (`8085.js`) - ✅ Intel 8085 with RIM/SIM instructions
+- **6502** (`6502.js`) - ✅ MOS 6502 (Commodore, Apple, NES)
+- **65816** (`65816.js`) - ✅ WDC 65C816 (SNES) with 16-bit modes
+- **6800** (`6800.js`) - ✅ Motorola 6800
+- **6809** (`6809.js`) - ✅ Motorola 6809 with indexed addressing
+- **8008** (`8008.js`) - ✅ Intel 8008
+- **1802** (`1802.js`) - ✅ RCA 1802 COSMAC
+
+### Legacy Emulator Architecture (old/)
+Each CPU emulator follows this pattern:
+
+**Core execution loop**:
+1. Fetch instruction from memory
+2. Decode opcode
+3. Execute instruction logic
+4. Update registers and flags
+5. Track clock cycles (T-states)
+
+**Key components**:
+- **Registers**: Typed arrays or plain variables for register storage
+- **Memory interface**: `byteAt(addr)`, `byteTo(addr, value)` callbacks
+- **Flags**: CPU-specific flag handling (Z80: SZYHXPNC, 6502: NVBDIZC)
+- **Cycle counting**: Instruction timing for accurate emulation
+
+**Z80 specifics** (`z80.js`):
+- Most complex CPU (~300+ instruction variants across 6 prefix sets)
+- Endianness detection for register pair access
+- Typed arrays (Uint8Array/Uint16Array) for register storage
+- Separate register sets for normal/alternate banks (AF', BC', DE', HL')
+- Index registers (IX, IY) with signed offset addressing
+- Special registers (I for interrupt vector, R with auto-increment)
+- All 3 interrupt modes (IM 0, 1, 2)
+- Undocumented Y/X flags (bits 5 and 3)
+- Prefix handlers: CB (bit ops), DD (IX), ED (extended), FD (IY), DDCB/FDCB (indexed bit ops)
+- Complete disassembler for all instruction formats
+- ✅ Converted from CoffeeScript eval() to direct ES6 implementations (3,700+ lines)
+
+**6502 specifics** (`6502.js`):
+- UMD module wrapper (works in Node.js and browsers)
+- Addressing modes: immediate, zero page, absolute, indexed, indirect
+- Extra cycle tracking for page boundary crosses
+
+### Migration Strategy (✓ Completed)
+All CPUs have been successfully modernized from `old/` to `src/`:
+1. ✅ Convert to ES6 module syntax (`export`/`import`)
+2. ✅ Use consistent register abstraction pattern
+3. ✅ Maintain backward-compatible memory interface
+4. ✅ Add comprehensive tests to `test/` (109+ tests for Z80 alone)
+5. ✅ Keep cycle-accurate timing behavior
+6. ✅ Remove eval() and runtime code generation
+7. ✅ Functional style with factory pattern (no classes)
+
+### Extensibility
+To add new CPU support:
+1. Study existing emulators in `old/` for patterns
+2. Implement core execution loop with CPU-specific opcodes
+3. Define register set and flag handling
+4. Add memory read/write interface
+5. Implement instruction decoder and executor
+6. Add comprehensive opcode test suite
+
+## Development Notes
+- Project migration **completed** - all major CPUs modernized
+- All legacy 2010s-era code successfully converted to ES6
+- Testing framework: QUnit with c8 coverage
+- 500+ tests across all CPUs with high coverage
+- Related project: `@asm80/core` (assembler)
+- Ready for production use in ASM80 toolchain
+
+
+## Workflow Orchestration
+
+### 1. Plan Node Default
+- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
+- If something goes sideways, STOP and re-plan immediately - don't keep pushing
+- Use plan mode for verification steps, not just building
+- Write detailed specs upfront to reduce ambiguity
+
+### 2. Subagent Strategy
+- Use subagents liberally to keep main context window clean
+- Offload research, exploration, and parallel analysis to subagents
+- For complex problems, throw more compute at it via subagents
+- One tack per subagent for focused execution
+
+### 3. Self-Improvement Loop
+- After ANY correction from the user: update `tasks/lessons.md` with the pattern
+- Write rules for yourself that prevent the same mistake
+- Ruthlessly iterate on these lessons until mistake rate drops
+- Review lessons at session start for relevant project
+
+### 4. Verification Before Done
+- Never mark a task complete without proving it works
+- Diff behavior between main and your changes when relevant
+- Ask yourself: "Would a staff engineer approve this?"
+- Run tests, check logs, demonstrate correctness
+
+### 5. Demand Elegance (Balanced)
+- For non-trivial changes: pause and ask "is there a more elegant way?"
+- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
+- Skip this for simple, obvious fixes - don't over-engineer
+- Challenge your own work before presenting it
+
+### 6. Autonomous Bug Fixing
+- When given a bug report: just fix it. Don't ask for hand-holding
+- Point at logs, errors, failing tests - then resolve them
+- Zero context switching required from the user
+- Go fix failing CI tests without being told how
+
+## Task Management
+
+1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
+2. **Verify Plan**: Check in before starting implementation
+3. **Track Progress**: Mark items complete as you go
+4. **Explain Changes**: High-level summary at each step
+5. **Document Results**: Add review section to `tasks/todo.md`
+6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
+
+## Core Principles
+
+- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
+- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
+- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+
+### Code style
+
+- Double quotes for strings
+- `const` and `let` only, never `var`
+- Arrow functions everywhere — never `function` keyword
+- No classes — functional style only
+- All comments in code must be in English
+- Every module starts with a top-level JSDoc block describing its purpose
+- Every exported function has a JSDoc block
+

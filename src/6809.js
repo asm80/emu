@@ -1266,7 +1266,7 @@ const PostByte = () => {
         T += 3;
       }
     } /* Just a 5 bit signed offset + register */ else {
-      const sByte = pb & 0x1f;
+      let sByte = pb & 0x1f;
       if (sByte > 15) /* Two's complement 5-bit value */ sByte -= 32;
       addr = preg + sByte;
       T += 1;
