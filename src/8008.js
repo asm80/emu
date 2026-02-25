@@ -342,6 +342,21 @@ export default (callbacks) => {
     return (dest >> 2) === condl ? 1 : 0;
   };
 
+  // Register name lookup for 8008: A,B,C,D,E,H,L,M (index 7 = M = memory [HL])
+  const REG8008 = ["a", "b", "c", "d", "e", "h", "l", null];
+
+  // ALU operation dispatch: ADD,ADC,SUB,SBB,ANA,XRA,ORA,CMP
+  const ALU_FNS = [
+    addByte, addByteWithCarry, subtractByte, subtractByteWithCarry,
+    andByte, xorByte, orByte, null  // null = CMP (subtractByte, result discarded)
+  ];
+
+  // Register getter: returns value of 8008 register r (0=A..6=L, 7=M=[HL])
+  const getR = (r) => r === 7 ? getByte(hl()) : regs[REG8008[r]];
+
+  // Register setter: sets value of 8008 register r
+  const setR = (r, v) => { if (r === 7) writeByte(hl(), v); else regs[REG8008[r]] = v; };
+
   // Instruction execution
   const execute = (i) => {
     let addr, w, c;
@@ -419,43 +434,16 @@ export default (callbacks) => {
         } else if ((i & 0xC7) === 0x06) {
           // MVI (load immediate)
           const imm = nextByte();
-          switch (yyy) {
-            case 0: regs.a = imm; break;
-            case 1: regs.b = imm; break;
-            case 2: regs.c = imm; break;
-            case 3: regs.d = imm; break;
-            case 4: regs.e = imm; break;
-            case 5: regs.h = imm; break;
-            case 6: regs.l = imm; break;
-            case 7: writeByte(hl(), imm); break;
-          }
+          setR(yyy, imm);
           regs.cycles += 8;
         } else if ((i & 0xC0) === 0x00) {
           // INR/DCR
           const isINR = (i & 1) === 0;
           const reg = yyy;
           if (isINR) {
-            switch (reg) {
-              case 0: regs.a = incrementByte(regs.a); break;
-              case 1: regs.b = incrementByte(regs.b); break;
-              case 2: regs.c = incrementByte(regs.c); break;
-              case 3: regs.d = incrementByte(regs.d); break;
-              case 4: regs.e = incrementByte(regs.e); break;
-              case 5: regs.h = incrementByte(regs.h); break;
-              case 6: regs.l = incrementByte(regs.l); break;
-              case 7: writeByte(hl(), incrementByte(getByte(hl()))); break;
-            }
+            setR(reg, incrementByte(getR(reg)));
           } else {
-            switch (reg) {
-              case 0: regs.a = decrementByte(regs.a); break;
-              case 1: regs.b = decrementByte(regs.b); break;
-              case 2: regs.c = decrementByte(regs.c); break;
-              case 3: regs.d = decrementByte(regs.d); break;
-              case 4: regs.e = decrementByte(regs.e); break;
-              case 5: regs.h = decrementByte(regs.h); break;
-              case 6: regs.l = decrementByte(regs.l); break;
-              case 7: writeByte(hl(), decrementByte(getByte(hl()))); break;
-            }
+            setR(reg, decrementByte(getR(reg)));
           }
           regs.cycles += 5;
         }
@@ -503,62 +491,17 @@ export default (callbacks) => {
       case 2: // 10xxxxxx - ALU operations with register
         {
           const op = yyy;
-          let src = 0;
-          switch (zzz) {
-            case 0: src = regs.a; break;
-            case 1: src = regs.b; break;
-            case 2: src = regs.c; break;
-            case 3: src = regs.d; break;
-            case 4: src = regs.e; break;
-            case 5: src = regs.h; break;
-            case 6: src = regs.l; break;
-            case 7: src = getByte(hl()); break;
-          }
-
-          switch (op) {
-            case 0: regs.a = addByte(regs.a, src); break;
-            case 1: regs.a = addByteWithCarry(regs.a, src); break;
-            case 2: regs.a = subtractByte(regs.a, src); break;
-            case 3: regs.a = subtractByteWithCarry(regs.a, src); break;
-            case 4: regs.a = andByte(regs.a, src); break;
-            case 5: regs.a = xorByte(regs.a, src); break;
-            case 6: regs.a = orByte(regs.a, src); break;
-            case 7: subtractByte(regs.a, src); break; // CMP
-          }
+          const src = getR(zzz);
+          if (op === 7) subtractByte(regs.a, src);      // CMP: flags only
+          else regs.a = ALU_FNS[op](regs.a, src);
           regs.cycles += (zzz === 7) ? 8 : 5;
         }
         break;
 
       case 3: // 11xxxxxx - MOV instructions
         {
-          const dst = yyy;
-          const src = zzz;
-          let value = 0;
-
-          // Get source value
-          switch (src) {
-            case 0: value = regs.a; break;
-            case 1: value = regs.b; break;
-            case 2: value = regs.c; break;
-            case 3: value = regs.d; break;
-            case 4: value = regs.e; break;
-            case 5: value = regs.h; break;
-            case 6: value = regs.l; break;
-            case 7: value = getByte(hl()); break;
-          }
-
-          // Set destination
-          switch (dst) {
-            case 0: regs.a = value; break;
-            case 1: regs.b = value; break;
-            case 2: regs.c = value; break;
-            case 3: regs.d = value; break;
-            case 4: regs.e = value; break;
-            case 5: regs.h = value; break;
-            case 6: regs.l = value; break;
-            case 7: writeByte(hl(), value); break;
-          }
-
+          const dst = yyy, src = zzz;
+          setR(dst, getR(src));
           regs.cycles += (src === 7 || dst === 7) ? 8 : 5;
         }
         break;
