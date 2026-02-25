@@ -253,6 +253,109 @@ export default (callbacks) => {
     return (h << 8) | l;
   };
 
+  // Register getter: returns value of Z80 register r (0=B,1=C,2=D,3=E,4=H,5=L,6=(HL),7=A)
+  const getReg = (r) => {
+    switch (r) {
+      case 0: return regs[R_B];
+      case 1: return regs[R_C];
+      case 2: return regs[R_D];
+      case 3: return regs[R_E];
+      case 4: return regs[R_H];
+      case 5: return regs[R_L];
+      case 6: return readByte(regPairs[RP_HL]);
+      case 7: return regs[R_A];
+    }
+  };
+
+  // Register setter: sets value of Z80 register r
+  const setReg = (r, value) => {
+    value &= 0xFF;
+    switch (r) {
+      case 0: regs[R_B] = value; break;
+      case 1: regs[R_C] = value; break;
+      case 2: regs[R_D] = value; break;
+      case 3: regs[R_E] = value; break;
+      case 4: regs[R_H] = value; break;
+      case 5: regs[R_L] = value; break;
+      case 6: writeByte(regPairs[RP_HL], value); break;
+      case 7: regs[R_A] = value; break;
+    }
+  };
+
+  const isMemory = (r) => r === 6;
+
+  // ALU operations for Z80: ADD,ADC,SUB,SBC,AND,XOR,OR,CP
+  const addA = (value) => {
+    const result = regs[R_A] + value;
+    const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
+    regs[R_A] = result & 0xFF;
+    regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
+                halfcarryAddTable[lookup & 0x07] |
+                overflowAddTable[lookup >> 4] |
+                sz53pTable[regs[R_A]];
+  };
+
+  const adcA = (value) => {
+    const result = regs[R_A] + value + (regs[R_F] & FLAG_C);
+    const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
+    regs[R_A] = result & 0xFF;
+    regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
+                halfcarryAddTable[lookup & 0x07] |
+                overflowAddTable[lookup >> 4] |
+                sz53pTable[regs[R_A]];
+  };
+
+  const subA = (value) => {
+    const result = regs[R_A] - value;
+    const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
+    regs[R_A] = result & 0xFF;
+    regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
+                FLAG_N |
+                halfcarrySubTable[lookup & 0x07] |
+                overflowSubTable[lookup >> 4] |
+                sz53pTable[regs[R_A]];
+  };
+
+  const sbcA = (value) => {
+    const result = regs[R_A] - value - (regs[R_F] & FLAG_C);
+    const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
+    regs[R_A] = result & 0xFF;
+    regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
+                FLAG_N |
+                halfcarrySubTable[lookup & 0x07] |
+                overflowSubTable[lookup >> 4] |
+                sz53pTable[regs[R_A]];
+  };
+
+  const andA = (value) => {
+    regs[R_A] &= value;
+    regs[R_F] = FLAG_H | sz53pTable[regs[R_A]];
+  };
+
+  const xorA = (value) => {
+    regs[R_A] ^= value;
+    regs[R_F] = sz53pTable[regs[R_A]];
+  };
+
+  const orA = (value) => {
+    regs[R_A] |= value;
+    regs[R_F] = sz53pTable[regs[R_A]];
+  };
+
+  const cpA = (value) => {
+    const result = regs[R_A] - value;
+    const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
+    regs[R_F] = (result & 0x100 ? FLAG_C : (result ? 0 : FLAG_Z)) |
+                FLAG_N |
+                halfcarrySubTable[lookup & 0x07] |
+                overflowSubTable[lookup >> 4] |
+                (value & (FLAG_Y | FLAG_X)) |
+                (result & FLAG_S);
+  };
+
+  // ALU dispatch table: ADD, ADC, SUB, SBC, AND, XOR, OR, CP
+  const Z80_ALU = [addA, adcA, subA, sbcA, andA, xorA, orA, cpA];
+
   /**
    * Execute CB-prefixed instruction (bit operations)
    */
@@ -262,36 +365,6 @@ export default (callbacks) => {
     // Extract bit number and register from opcode pattern
     const bit = (opcode >> 3) & 0x07;
     const reg = opcode & 0x07;
-
-    // Helper to get/set register or (HL)
-    const getReg = (r) => {
-      switch (r) {
-        case 0: return regs[R_B];
-        case 1: return regs[R_C];
-        case 2: return regs[R_D];
-        case 3: return regs[R_E];
-        case 4: return regs[R_H];
-        case 5: return regs[R_L];
-        case 6: return readByte(regPairs[RP_HL]);
-        case 7: return regs[R_A];
-      }
-    };
-
-    const setReg = (r, value) => {
-      value &= 0xFF;
-      switch (r) {
-        case 0: regs[R_B] = value; break;
-        case 1: regs[R_C] = value; break;
-        case 2: regs[R_D] = value; break;
-        case 3: regs[R_E] = value; break;
-        case 4: regs[R_H] = value; break;
-        case 5: regs[R_L] = value; break;
-        case 6: writeByte(regPairs[RP_HL], value); break;
-        case 7: regs[R_A] = value; break;
-      }
-    };
-
-    const isMemory = (r) => r === 6;
 
     if (opcode < 0x40) {
       // 0x00-0x3F: Rotates and shifts
@@ -1342,6 +1415,28 @@ export default (callbacks) => {
     // Update R register (auto-increment on each opcode fetch, not operand fetch)
     regs[R_R] = ((regs[R_R] + 1) & 0x7F) | (regs[R_R] & 0x80);
 
+    // LD r,r' instructions (0x40-0x7F): generic register-to-register loads
+    if (opcode >= 0x40 && opcode <= 0x7F) {
+      if (opcode === 0x76) {
+        halted = true;
+        regPairs[RP_PC] = (regPairs[RP_PC] - 1) & 0xFFFF; // Stay on HALT
+        tstates += 4;
+      } else {
+        const dst = (opcode >> 3) & 7, src = opcode & 7;
+        setReg(dst, getReg(src));
+        tstates += (src === 6 || dst === 6) ? 7 : 4;
+      }
+      return;
+    }
+
+    // ALU operations (0x80-0xBF): ADD,ADC,SUB,SBC,AND,XOR,OR,CP
+    if (opcode >= 0x80 && opcode <= 0xBF) {
+      const op = (opcode >> 3) & 7, src = opcode & 7;
+      Z80_ALU[op](getReg(src));
+      tstates += src === 6 ? 7 : 4;
+      return;
+    }
+
     // Decode and execute based on opcode
     switch (opcode) {
       case 0x00: // NOP
@@ -1921,658 +2016,6 @@ export default (callbacks) => {
                     (regs[R_A] & (FLAG_Y | FLAG_X));
         tstates += 4;
         break;
-
-      // LD r,r' instructions (0x40-0x7F) - All 8-bit register loads
-      case 0x40: regs[R_B] = regs[R_B]; tstates += 4; break; // LD B,B
-      case 0x41: regs[R_B] = regs[R_C]; tstates += 4; break; // LD B,C
-      case 0x42: regs[R_B] = regs[R_D]; tstates += 4; break; // LD B,D
-      case 0x43: regs[R_B] = regs[R_E]; tstates += 4; break; // LD B,E
-      case 0x44: regs[R_B] = regs[R_H]; tstates += 4; break; // LD B,H
-      case 0x45: regs[R_B] = regs[R_L]; tstates += 4; break; // LD B,L
-      case 0x46: regs[R_B] = readByte(regPairs[RP_HL]); tstates += 7; break; // LD B,(HL)
-      case 0x47: regs[R_B] = regs[R_A]; tstates += 4; break; // LD B,A
-
-      case 0x48: regs[R_C] = regs[R_B]; tstates += 4; break; // LD C,B
-      case 0x49: regs[R_C] = regs[R_C]; tstates += 4; break; // LD C,C
-      case 0x4A: regs[R_C] = regs[R_D]; tstates += 4; break; // LD C,D
-      case 0x4B: regs[R_C] = regs[R_E]; tstates += 4; break; // LD C,E
-      case 0x4C: regs[R_C] = regs[R_H]; tstates += 4; break; // LD C,H
-      case 0x4D: regs[R_C] = regs[R_L]; tstates += 4; break; // LD C,L
-      case 0x4E: regs[R_C] = readByte(regPairs[RP_HL]); tstates += 7; break; // LD C,(HL)
-      case 0x4F: regs[R_C] = regs[R_A]; tstates += 4; break; // LD C,A
-
-      case 0x50: regs[R_D] = regs[R_B]; tstates += 4; break; // LD D,B
-      case 0x51: regs[R_D] = regs[R_C]; tstates += 4; break; // LD D,C
-      case 0x52: regs[R_D] = regs[R_D]; tstates += 4; break; // LD D,D
-      case 0x53: regs[R_D] = regs[R_E]; tstates += 4; break; // LD D,E
-      case 0x54: regs[R_D] = regs[R_H]; tstates += 4; break; // LD D,H
-      case 0x55: regs[R_D] = regs[R_L]; tstates += 4; break; // LD D,L
-      case 0x56: regs[R_D] = readByte(regPairs[RP_HL]); tstates += 7; break; // LD D,(HL)
-      case 0x57: regs[R_D] = regs[R_A]; tstates += 4; break; // LD D,A
-
-      case 0x58: regs[R_E] = regs[R_B]; tstates += 4; break; // LD E,B
-      case 0x59: regs[R_E] = regs[R_C]; tstates += 4; break; // LD E,C
-      case 0x5A: regs[R_E] = regs[R_D]; tstates += 4; break; // LD E,D
-      case 0x5B: regs[R_E] = regs[R_E]; tstates += 4; break; // LD E,E
-      case 0x5C: regs[R_E] = regs[R_H]; tstates += 4; break; // LD E,H
-      case 0x5D: regs[R_E] = regs[R_L]; tstates += 4; break; // LD E,L
-      case 0x5E: regs[R_E] = readByte(regPairs[RP_HL]); tstates += 7; break; // LD E,(HL)
-      case 0x5F: regs[R_E] = regs[R_A]; tstates += 4; break; // LD E,A
-
-      case 0x60: regs[R_H] = regs[R_B]; tstates += 4; break; // LD H,B
-      case 0x61: regs[R_H] = regs[R_C]; tstates += 4; break; // LD H,C
-      case 0x62: regs[R_H] = regs[R_D]; tstates += 4; break; // LD H,D
-      case 0x63: regs[R_H] = regs[R_E]; tstates += 4; break; // LD H,E
-      case 0x64: regs[R_H] = regs[R_H]; tstates += 4; break; // LD H,H
-      case 0x65: regs[R_H] = regs[R_L]; tstates += 4; break; // LD H,L
-      case 0x66: regs[R_H] = readByte(regPairs[RP_HL]); tstates += 7; break; // LD H,(HL)
-      case 0x67: regs[R_H] = regs[R_A]; tstates += 4; break; // LD H,A
-
-      case 0x68: regs[R_L] = regs[R_B]; tstates += 4; break; // LD L,B
-      case 0x69: regs[R_L] = regs[R_C]; tstates += 4; break; // LD L,C
-      case 0x6A: regs[R_L] = regs[R_D]; tstates += 4; break; // LD L,D
-      case 0x6B: regs[R_L] = regs[R_E]; tstates += 4; break; // LD L,E
-      case 0x6C: regs[R_L] = regs[R_H]; tstates += 4; break; // LD L,H
-      case 0x6D: regs[R_L] = regs[R_L]; tstates += 4; break; // LD L,L
-      case 0x6E: regs[R_L] = readByte(regPairs[RP_HL]); tstates += 7; break; // LD L,(HL)
-      case 0x6F: regs[R_L] = regs[R_A]; tstates += 4; break; // LD L,A
-
-      case 0x70: writeByte(regPairs[RP_HL], regs[R_B]); tstates += 7; break; // LD (HL),B
-      case 0x71: writeByte(regPairs[RP_HL], regs[R_C]); tstates += 7; break; // LD (HL),C
-      case 0x72: writeByte(regPairs[RP_HL], regs[R_D]); tstates += 7; break; // LD (HL),D
-      case 0x73: writeByte(regPairs[RP_HL], regs[R_E]); tstates += 7; break; // LD (HL),E
-      case 0x74: writeByte(regPairs[RP_HL], regs[R_H]); tstates += 7; break; // LD (HL),H
-      case 0x75: writeByte(regPairs[RP_HL], regs[R_L]); tstates += 7; break; // LD (HL),L
-
-      case 0x76: // HALT
-        halted = true;
-        regPairs[RP_PC] = (regPairs[RP_PC] - 1) & 0xFFFF; // Stay on HALT
-        tstates += 4;
-        break;
-
-      case 0x77: writeByte(regPairs[RP_HL], regs[R_A]); tstates += 7; break; // LD (HL),A
-
-      case 0x78: regs[R_A] = regs[R_B]; tstates += 4; break; // LD A,B
-      case 0x79: regs[R_A] = regs[R_C]; tstates += 4; break; // LD A,C
-      case 0x7A: regs[R_A] = regs[R_D]; tstates += 4; break; // LD A,D
-      case 0x7B: regs[R_A] = regs[R_E]; tstates += 4; break; // LD A,E
-      case 0x7C: regs[R_A] = regs[R_H]; tstates += 4; break; // LD A,H
-      case 0x7D: regs[R_A] = regs[R_L]; tstates += 4; break; // LD A,L
-      case 0x7E: regs[R_A] = readByte(regPairs[RP_HL]); tstates += 7; break; // LD A,(HL)
-      case 0x7F: regs[R_A] = regs[R_A]; tstates += 4; break; // LD A,A
-
-      // Arithmetic operations (0x80-0xBF)
-      case 0x80: { // ADD A,B
-        const value = regs[R_B];
-        const result = regs[R_A] + value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x81: { // ADD A,C
-        const value = regs[R_C];
-        const result = regs[R_A] + value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x82: { // ADD A,D
-        const value = regs[R_D];
-        const result = regs[R_A] + value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x83: { // ADD A,E
-        const value = regs[R_E];
-        const result = regs[R_A] + value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x84: { // ADD A,H
-        const value = regs[R_H];
-        const result = regs[R_A] + value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x85: { // ADD A,L
-        const value = regs[R_L];
-        const result = regs[R_A] + value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x86: { // ADD A,(HL)
-        const value = readByte(regPairs[RP_HL]);
-        const result = regs[R_A] + value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 7;
-        break;
-      }
-
-      case 0x87: { // ADD A,A
-        const value = regs[R_A];
-        const result = regs[R_A] + value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x88: { // ADC A,B
-        const value = regs[R_B];
-        const result = regs[R_A] + value + (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x89: { // ADC A,C
-        const value = regs[R_C];
-        const result = regs[R_A] + value + (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x8A: { // ADC A,D
-        const value = regs[R_D];
-        const result = regs[R_A] + value + (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x8B: { // ADC A,E
-        const value = regs[R_E];
-        const result = regs[R_A] + value + (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x8C: { // ADC A,H
-        const value = regs[R_H];
-        const result = regs[R_A] + value + (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x8D: { // ADC A,L
-        const value = regs[R_L];
-        const result = regs[R_A] + value + (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x8E: { // ADC A,(HL)
-        const value = readByte(regPairs[RP_HL]);
-        const result = regs[R_A] + value + (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 7;
-        break;
-      }
-
-      case 0x8F: { // ADC A,A
-        const value = regs[R_A];
-        const result = regs[R_A] + value + (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    halfcarryAddTable[lookup & 0x07] |
-                    overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x90: { // SUB B
-        const value = regs[R_B];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x91: { // SUB C
-        const value = regs[R_C];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x92: { // SUB D
-        const value = regs[R_D];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x93: { // SUB E
-        const value = regs[R_E];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x94: { // SUB H
-        const value = regs[R_H];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x95: { // SUB L
-        const value = regs[R_L];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x96: { // SUB (HL)
-        const value = readByte(regPairs[RP_HL]);
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 7;
-        break;
-      }
-
-      case 0x97: { // SUB A
-        const value = regs[R_A];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x98: { // SBC A,B
-        const value = regs[R_B];
-        const result = regs[R_A] - value - (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x99: { // SBC A,C
-        const value = regs[R_C];
-        const result = regs[R_A] - value - (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x9A: { // SBC A,D
-        const value = regs[R_D];
-        const result = regs[R_A] - value - (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x9B: { // SBC A,E
-        const value = regs[R_E];
-        const result = regs[R_A] - value - (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x9C: { // SBC A,H
-        const value = regs[R_H];
-        const result = regs[R_A] - value - (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x9D: { // SBC A,L
-        const value = regs[R_L];
-        const result = regs[R_A] - value - (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0x9E: { // SBC A,(HL)
-        const value = readByte(regPairs[RP_HL]);
-        const result = regs[R_A] - value - (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 7;
-        break;
-      }
-
-      case 0x9F: { // SBC A,A
-        const value = regs[R_A];
-        const result = regs[R_A] - value - (regs[R_F] & FLAG_C);
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_A] = result & 0xFF;
-        regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
-        tstates += 4;
-        break;
-      }
-
-      case 0xA0: regs[R_A] &= regs[R_B]; regs[R_F] = FLAG_H | sz53pTable[regs[R_A]]; tstates += 4; break; // AND B
-      case 0xA1: regs[R_A] &= regs[R_C]; regs[R_F] = FLAG_H | sz53pTable[regs[R_A]]; tstates += 4; break; // AND C
-      case 0xA2: regs[R_A] &= regs[R_D]; regs[R_F] = FLAG_H | sz53pTable[regs[R_A]]; tstates += 4; break; // AND D
-      case 0xA3: regs[R_A] &= regs[R_E]; regs[R_F] = FLAG_H | sz53pTable[regs[R_A]]; tstates += 4; break; // AND E
-      case 0xA4: regs[R_A] &= regs[R_H]; regs[R_F] = FLAG_H | sz53pTable[regs[R_A]]; tstates += 4; break; // AND H
-      case 0xA5: regs[R_A] &= regs[R_L]; regs[R_F] = FLAG_H | sz53pTable[regs[R_A]]; tstates += 4; break; // AND L
-      case 0xA6: regs[R_A] &= readByte(regPairs[RP_HL]); regs[R_F] = FLAG_H | sz53pTable[regs[R_A]]; tstates += 7; break; // AND (HL)
-      case 0xA7: regs[R_A] &= regs[R_A]; regs[R_F] = FLAG_H | sz53pTable[regs[R_A]]; tstates += 4; break; // AND A
-
-      case 0xA8: regs[R_A] ^= regs[R_B]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // XOR B
-      case 0xA9: regs[R_A] ^= regs[R_C]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // XOR C
-      case 0xAA: regs[R_A] ^= regs[R_D]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // XOR D
-      case 0xAB: regs[R_A] ^= regs[R_E]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // XOR E
-      case 0xAC: regs[R_A] ^= regs[R_H]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // XOR H
-      case 0xAD: regs[R_A] ^= regs[R_L]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // XOR L
-      case 0xAE: regs[R_A] ^= readByte(regPairs[RP_HL]); regs[R_F] = sz53pTable[regs[R_A]]; tstates += 7; break; // XOR (HL)
-      case 0xAF: regs[R_A] ^= regs[R_A]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // XOR A
-
-      case 0xB0: regs[R_A] |= regs[R_B]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // OR B
-      case 0xB1: regs[R_A] |= regs[R_C]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // OR C
-      case 0xB2: regs[R_A] |= regs[R_D]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // OR D
-      case 0xB3: regs[R_A] |= regs[R_E]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // OR E
-      case 0xB4: regs[R_A] |= regs[R_H]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // OR H
-      case 0xB5: regs[R_A] |= regs[R_L]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // OR L
-      case 0xB6: regs[R_A] |= readByte(regPairs[RP_HL]); regs[R_F] = sz53pTable[regs[R_A]]; tstates += 7; break; // OR (HL)
-      case 0xB7: regs[R_A] |= regs[R_A]; regs[R_F] = sz53pTable[regs[R_A]]; tstates += 4; break; // OR A
-
-      case 0xB8: { // CP B
-        const value = regs[R_B];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_F] = (result & 0x100 ? FLAG_C : (result ? 0 : FLAG_Z)) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    (value & (FLAG_Y | FLAG_X)) |
-                    (result & FLAG_S);
-        tstates += 4;
-        break;
-      }
-
-      case 0xB9: { // CP C
-        const value = regs[R_C];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_F] = (result & 0x100 ? FLAG_C : (result ? 0 : FLAG_Z)) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    (value & (FLAG_Y | FLAG_X)) |
-                    (result & FLAG_S);
-        tstates += 4;
-        break;
-      }
-
-      case 0xBA: { // CP D
-        const value = regs[R_D];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_F] = (result & 0x100 ? FLAG_C : (result ? 0 : FLAG_Z)) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    (value & (FLAG_Y | FLAG_X)) |
-                    (result & FLAG_S);
-        tstates += 4;
-        break;
-      }
-
-      case 0xBB: { // CP E
-        const value = regs[R_E];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_F] = (result & 0x100 ? FLAG_C : (result ? 0 : FLAG_Z)) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    (value & (FLAG_Y | FLAG_X)) |
-                    (result & FLAG_S);
-        tstates += 4;
-        break;
-      }
-
-      case 0xBC: { // CP H
-        const value = regs[R_H];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_F] = (result & 0x100 ? FLAG_C : (result ? 0 : FLAG_Z)) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    (value & (FLAG_Y | FLAG_X)) |
-                    (result & FLAG_S);
-        tstates += 4;
-        break;
-      }
-
-      case 0xBD: { // CP L
-        const value = regs[R_L];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_F] = (result & 0x100 ? FLAG_C : (result ? 0 : FLAG_Z)) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    (value & (FLAG_Y | FLAG_X)) |
-                    (result & FLAG_S);
-        tstates += 4;
-        break;
-      }
-
-      case 0xBE: { // CP (HL)
-        const value = readByte(regPairs[RP_HL]);
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_F] = (result & 0x100 ? FLAG_C : (result ? 0 : FLAG_Z)) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    (value & (FLAG_Y | FLAG_X)) |
-                    (result & FLAG_S);
-        tstates += 7;
-        break;
-      }
-
-      case 0xBF: { // CP A
-        const value = regs[R_A];
-        const result = regs[R_A] - value;
-        const lookup = ((regs[R_A] & 0x88) >> 3) | ((value & 0x88) >> 2) | ((result & 0x88) >> 1);
-        regs[R_F] = (result & 0x100 ? FLAG_C : (result ? 0 : FLAG_Z)) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup & 0x07] |
-                    overflowSubTable[lookup >> 4] |
-                    (value & (FLAG_Y | FLAG_X)) |
-                    (result & FLAG_S);
-        tstates += 4;
-        break;
-      }
-
       // Conditional returns, jumps, and calls (0xC0-0xFF)
       case 0xC0: // RET NZ
         tstates += 1;
