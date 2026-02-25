@@ -3120,6 +3120,37 @@ export default (callbacks) => {
   const steps = (cycles) => {
     const targetTstates = tstates + cycles;
 
+    // When halted, the main loop's `!halted` guard prevents it from running, so
+    // interrupt checks inside the loop are unreachable.  Handle HALT wakeup here,
+    // before entering the loop.  NMI always wakes; IRQ only when IFF1 is set.
+    if (halted) {
+      if (NMIPending) {
+        NMIPending = false;
+        regPairs[RP_PC] = (regPairs[RP_PC] + 1) & 0xFFFF; // return to instr after HALT
+        halted = false;
+        push(regPairs[RP_PC]);
+        regPairs[RP_PC] = 0x0066;
+        tstates += 11;
+      } else if (interruptPending && iff1) {
+        interruptPending = false;
+        regPairs[RP_PC] = (regPairs[RP_PC] + 1) & 0xFFFF; // return to instr after HALT
+        halted = false;
+        iff1 = 0;
+        iff2 = 0;
+        push(regPairs[RP_PC]);
+        switch (im) {
+          case 0: regPairs[RP_PC] = 0x0038; tstates += 6; break;
+          case 1: regPairs[RP_PC] = 0x0038; tstates += 7; break;
+          case 2: {
+            const vector = (regs[R_I] << 8) | 0xFF;
+            regPairs[RP_PC] = readWord(vector);
+            tstates += 7;
+            break;
+          }
+        }
+      }
+    }
+
     while (tstates < targetTstates && !halted) {
       // Handle NMI (non-maskable interrupt)
       if (NMIPending) {
