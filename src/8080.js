@@ -315,6 +315,26 @@ export default (callbacks) => {
     return r & 0xFFFF;
   };
 
+  // Register name lookup: B,C,D,E,H,L,M(=memory),A (index 6 = M = memory [HL])
+  const REG = ["b", "c", "d", "e", "h", "l", null, "a"];
+
+  // ALU operation dispatch: ADD,ADC,SUB,SBB,ANA,XRA,ORA,CMP
+  const ALU_FNS = [
+    addByte, addByteWithCarry, subtractByte, subtractByteWithCarry,
+    andByte, xorByte, orByte, null  // null = CMP (subtractByte, result discarded)
+  ];
+
+  // Register pair getters/setters for 0x00-0x3F: BC, DE, HL, SP
+  const RP_GET = [bc, de, hl, () => regs.sp];
+  const RP_SET = [setBC, setDE, setHL, (v) => { regs.sp = v & 0xFFFF; }];
+
+  // Register pair getters/setters for 0xC0-0xFF PUSH/POP: BC, DE, HL, PSW
+  const RP16_GET = [bc, de, hl, af];
+  const RP16_SET = [setBC, setDE, setHL, setAF];
+
+  // Condition code flag mapping: NZ, Z, NC, C, PO, PE, P, M
+  const CC_FLAGS = [ZERO, ZERO, CARRY, CARRY, PARITY, PARITY, SIGN, SIGN];
+
   // Instruction execution
   const execute = (i) => {
     let addr, w, c;
@@ -322,1051 +342,346 @@ export default (callbacks) => {
     regs.f &= 0xD7;
     regs.f |= 0x02;
 
-    switch (i) {
-      // NOP
-      case 0x00:
-      case 0x08:
-      case 0x10:
-      case 0x18:
-      case 0x20:
-      case 0x28:
-      case 0x30:
-      case 0x38:
-        regs.cycles += 4;
-        break;
-
-      // LXI B,nn
-      case 0x01:
-        setBC(nextWord());
-        regs.cycles += 10;
-        break;
-
-      // STAX B
-      case 0x02:
-        writeByte(bc(), regs.a);
-        regs.cycles += 7;
-        break;
-
-      // INX B
-      case 0x03:
-        setBC((bc() + 1) & 0xFFFF);
-        regs.cycles += 6;
-        break;
-
-      // INR B
-      case 0x04:
-        regs.b = incrementByte(regs.b);
-        regs.cycles += 5;
-        break;
-
-      // DCR B
-      case 0x05:
-        regs.b = decrementByte(regs.b);
-        regs.cycles += 5;
-        break;
-
-      // MVI B,n
-      case 0x06:
-        regs.b = nextByte();
-        regs.cycles += 7;
-        break;
-
-      // RLC
-      case 0x07: {
-        const l = (regs.a & 0x80) >> 7;
-        if (l) {
-          regs.f |= CARRY;
-        } else {
-          regs.f &= ~CARRY & 0xFF;
-        }
-        regs.a = ((regs.a << 1) & 0xFE) | l;
-        regs.cycles += 4;
-        break;
+    // MOV instructions: 0x40-0x7F
+    if (i >= 0x40 && i <= 0x7F) {
+      if (i === 0x76) {
+        regs.cycles += 7; regs.halted = 1;                   // HLT
+      } else {
+        const dst = (i >> 3) & 7, src = i & 7;
+        const val = src === 6 ? byteAt(hl()) : regs[REG[src]];
+        if (dst === 6) { writeByte(hl(), val); regs.cycles += 7; }
+        else { regs[REG[dst]] = val; regs.cycles += src === 6 ? 7 : 5; }
       }
 
-      // DAD B
-      case 0x09:
-        setHL(addWord(hl(), bc()));
-        regs.cycles += 11;
-        break;
+    // ALU instructions: 0x80-0xBF (ADD,ADC,SUB,SBB,ANA,XRA,ORA,CMP)
+    } else if (i >= 0x80 && i <= 0xBF) {
+      const op = (i >> 3) & 7, src = i & 7;
+      const val = src === 6 ? byteAt(hl()) : regs[REG[src]];
+      if (op === 7) subtractByte(regs.a, val);               // CMP: flags only
+      else regs.a = ALU_FNS[op](regs.a, val);
+      regs.cycles += src === 6 ? 7 : 4;
 
-      // LDAX B
-      case 0x0A:
-        regs.a = byteAt(bc());
-        regs.cycles += 7;
-        break;
+    } else if (i < 0x40) {
+      const low3 = i & 7, low4 = i & 0x0F;
+      const reg = (i >> 3) & 7, rp = (i >> 4) & 3;
+      if (low3 === 4) {
+        // INR: 0x04,0x0C,0x14,0x1C,0x24,0x2C,0x34,0x3C
+        if (reg === 6) { addr = hl(); writeByte(addr, incrementByte(byteAt(addr))); regs.cycles += 10; }
+        else { regs[REG[reg]] = incrementByte(regs[REG[reg]]); regs.cycles += 5; }
+      } else if (low3 === 5) {
+        // DCR: 0x05,0x0D,0x15,0x1D,0x25,0x2D,0x35,0x3D
+        if (reg === 6) { addr = hl(); writeByte(addr, decrementByte(byteAt(addr))); regs.cycles += 10; }
+        else { regs[REG[reg]] = decrementByte(regs[REG[reg]]); regs.cycles += 5; }
+      } else if (low3 === 6) {
+        // MVI: 0x06,0x0E,0x16,0x1E,0x26,0x2E,0x36,0x3E
+        if (reg === 6) { writeByte(hl(), nextByte()); regs.cycles += 10; }
+        else { regs[REG[reg]] = nextByte(); regs.cycles += 7; }
+      } else if (low4 === 1) {
+        // LXI: 0x01,0x11,0x21,0x31
+        RP_SET[rp](nextWord()); regs.cycles += 10;
+      } else if (low4 === 3) {
+        // INX: 0x03,0x13,0x23,0x33
+        RP_SET[rp]((RP_GET[rp]() + 1) & 0xFFFF); regs.cycles += 6;
+      } else if (low4 === 0xB) {
+        // DCX: 0x0B,0x1B,0x2B,0x3B
+        RP_SET[rp]((RP_GET[rp]() - 1 + 0x10000) & 0xFFFF); regs.cycles += 6;
+      } else if (low4 === 9) {
+        // DAD: 0x09,0x19,0x29,0x39
+        setHL(addWord(hl(), RP_GET[rp]())); regs.cycles += 11;
+      } else if (low4 === 2 && rp < 2) {
+        // STAX: 0x02,0x12
+        writeByte(RP_GET[rp](), regs.a); regs.cycles += 7;
+      } else if (low4 === 0xA && rp < 2) {
+        // LDAX: 0x0A,0x1A
+        regs.a = byteAt(RP_GET[rp]()); regs.cycles += 7;
+      } else {
+        switch (i) {
+          // NOP and undocumented NOP aliases
+          case 0x00:
+          case 0x08:
+          case 0x10:
+          case 0x18:
+          case 0x20:
+          case 0x28:
+          case 0x30:
+          case 0x38:
+            regs.cycles += 4;
+            break;
 
-      // DCX B
-      case 0x0B:
-        setBC((bc() + 65535) & 0xFFFF);
-        regs.cycles += 6;
-        break;
+          // RLC
+          case 0x07: {
+            const l = (regs.a & 0x80) >> 7;
+            if (l) {
+              regs.f |= CARRY;
+            } else {
+              regs.f &= ~CARRY & 0xFF;
+            }
+            regs.a = ((regs.a << 1) & 0xFE) | l;
+            regs.cycles += 4;
+            break;
+          }
 
-      // INR C
-      case 0x0C:
-        regs.c = incrementByte(regs.c);
-        regs.cycles += 5;
-        break;
+          // RRC
+          case 0x0F: {
+            const h = (regs.a & 1) << 7;
+            if (h) {
+              regs.f |= CARRY;
+            } else {
+              regs.f &= ~CARRY & 0xFF;
+            }
+            regs.a = ((regs.a >> 1) & 0x7F) | h;
+            regs.cycles += 4;
+            break;
+          }
 
-      // DCR C
-      case 0x0D:
-        regs.c = decrementByte(regs.c);
-        regs.cycles += 5;
-        break;
+          // RAL
+          case 0x17:
+            c = (regs.f & CARRY) ? 1 : 0;
+            if (regs.a & 128) {
+              regs.f |= CARRY;
+            } else {
+              regs.f &= ~CARRY & 0xFF;
+            }
+            regs.a = ((regs.a << 1) & 0xFE) | c;
+            regs.cycles += 4;
+            break;
 
-      // MVI C,n
-      case 0x0E:
-        regs.c = nextByte();
-        regs.cycles += 7;
-        break;
+          // RAR
+          case 0x1F: {
+            const cy = (regs.f & CARRY) ? 128 : 0;
+            if (regs.a & 1) {
+              regs.f |= CARRY;
+            } else {
+              regs.f &= ~CARRY & 0xFF;
+            }
+            regs.a = ((regs.a >> 1) & 0x7F) | cy;
+            regs.cycles += 4;
+            break;
+          }
 
-      // RRCA
-      case 0x0F: {
-        const h = (regs.a & 1) << 7;
-        if (h) {
-          regs.f |= CARRY;
-        } else {
-          regs.f &= ~CARRY & 0xFF;
+          // SHLD (nn)
+          case 0x22:
+            writeWord(nextWord(), hl());
+            regs.cycles += 16;
+            break;
+
+          // DAA (Decimal Adjust Accumulator)
+          case 0x27: {
+            let temp = regs.a;
+            if (regs.f & CARRY) {
+              temp |= 0x100;
+            }
+            if (regs.f & HALFCARRY) {
+              temp |= 0x200;
+            }
+            const AF = daaTable[temp];
+            regs.a = (AF >> 8) & 0xFF;
+            regs.f = (AF & 0xD7) | 0x02;
+            regs.cycles += 4;
+            break;
+          }
+
+          // LHLD (nn)
+          case 0x2A:
+            setHL(getWord(nextWord()));
+            regs.cycles += 16;
+            break;
+
+          // CMA
+          case 0x2F:
+            regs.a ^= 0xFF;
+            regs.cycles += 4;
+            break;
+
+          // STA (nn)
+          case 0x32:
+            writeByte(nextWord(), regs.a);
+            regs.cycles += 13;
+            break;
+
+          // STC
+          case 0x37:
+            regs.f |= CARRY;
+            regs.cycles += 4;
+            break;
+
+          // LDA (nn)
+          case 0x3A:
+            regs.a = byteAt(nextWord());
+            regs.cycles += 13;
+            break;
+
+          // CMC
+          case 0x3F:
+            regs.f ^= CARRY;
+            regs.cycles += 4;
+            break;
+
+          default:
+            regs.cycles += 4;
+            break;
         }
-        regs.a = ((regs.a >> 1) & 0x7F) | h;
-        regs.cycles += 4;
-        break;
       }
 
-      // LXI D,nn
-      case 0x11:
-        setDE(nextWord());
+    } else {
+      const low3 = i & 7, low4 = i & 0x0F;
+      const rp = (i >> 4) & 3, cc = (i >> 3) & 7;
+      if (low3 === 7) {
+        // RST: 0xC7,0xCF,0xD7,0xDF,0xE7,0xEF,0xF7,0xFF
+        push(regs.pc); regs.pc = i & 0x38; regs.cycles += 11;
+      } else if (low3 === 0) {
+        // RCC: 0xC0,0xC8,0xD0,0xD8,0xE0,0xE8,0xF0,0xF8
+        const cond = (cc & 1) ? !!(regs.f & CC_FLAGS[cc]) : !(regs.f & CC_FLAGS[cc]);
+        if (cond) { regs.pc = pop(); regs.cycles += 11; } else { regs.cycles += 5; }
+      } else if (low3 === 2) {
+        // JCC: 0xC2,0xCA,0xD2,0xDA,0xE2,0xEA,0xF2,0xFA
+        const cond = (cc & 1) ? !!(regs.f & CC_FLAGS[cc]) : !(regs.f & CC_FLAGS[cc]);
+        regs.pc = cond ? nextWord() : (regs.pc + 2) & 0xFFFF;
         regs.cycles += 10;
-        break;
+      } else if (low3 === 4) {
+        // CCC: 0xC4,0xCC,0xD4,0xDC,0xE4,0xEC,0xF4,0xFC
+        const cond = (cc & 1) ? !!(regs.f & CC_FLAGS[cc]) : !(regs.f & CC_FLAGS[cc]);
+        if (cond) { regs.cycles += 17; w = nextWord(); push(regs.pc); regs.pc = w; }
+        else { regs.cycles += 11; regs.pc = (regs.pc + 2) & 0xFFFF; }
+      } else if (low4 === 5) {
+        // PUSH: 0xC5,0xD5,0xE5,0xF5
+        push(RP16_GET[rp]()); regs.cycles += 11;
+      } else if (low4 === 1) {
+        // POP: 0xC1,0xD1,0xE1,0xF1
+        RP16_SET[rp](pop()); regs.cycles += 10;
+      } else {
+        switch (i) {
+          // JMP nn (also 0xCB)
+          case 0xC3:
+          case 0xCB:
+            regs.pc = getWord(regs.pc);
+            regs.cycles += 10;
+            break;
 
-      // STAX D
-      case 0x12:
-        writeByte(de(), regs.a);
-        regs.cycles += 7;
-        break;
+          // ADI n
+          case 0xC6:
+            regs.a = addByte(regs.a, nextByte());
+            regs.cycles += 7;
+            break;
 
-      // INX D
-      case 0x13:
-        setDE((de() + 1) & 0xFFFF);
-        regs.cycles += 6;
-        break;
+          // RET (also 0xD9)
+          case 0xC9:
+          case 0xD9:
+            regs.pc = pop();
+            regs.cycles += 10;
+            break;
 
-      // INR D
-      case 0x14:
-        regs.d = incrementByte(regs.d);
-        regs.cycles += 5;
-        break;
+          // ACI n
+          case 0xCE:
+            regs.a = addByteWithCarry(regs.a, nextByte());
+            regs.cycles += 7;
+            break;
 
-      // DCR D
-      case 0x15:
-        regs.d = decrementByte(regs.d);
-        regs.cycles += 5;
-        break;
+          // CALL nn (also 0xDD, 0xED, 0xFD)
+          case 0xCD:
+          case 0xDD:
+          case 0xED:
+          case 0xFD:
+            w = nextWord();
+            push(regs.pc);
+            regs.pc = w;
+            regs.cycles += 17;
+            break;
 
-      // MVI D,n
-      case 0x16:
-        regs.d = nextByte();
-        regs.cycles += 7;
-        break;
+          // OUT (n),A
+          case 0xD3:
+            writePort(nextByte(), regs.a);
+            regs.cycles += 10;
+            break;
 
-      // RLA
-      case 0x17:
-        c = (regs.f & CARRY) ? 1 : 0;
-        if (regs.a & 128) {
-          regs.f |= CARRY;
-        } else {
-          regs.f &= ~CARRY & 0xFF;
+          // SUI n
+          case 0xD6:
+            regs.a = subtractByte(regs.a, nextByte());
+            regs.cycles += 7;
+            break;
+
+          // IN A,(n)
+          case 0xDB:
+            regs.a = readPort(nextByte());
+            regs.cycles += 10;
+            break;
+
+          // SBI n
+          case 0xDE:
+            regs.a = subtractByteWithCarry(regs.a, nextByte());
+            regs.cycles += 7;
+            break;
+
+          // XTHL
+          case 0xE3: {
+            const a = getWord(regs.sp);
+            writeWord(regs.sp, hl());
+            setHL(a);
+            regs.cycles += 4;
+            break;
+          }
+
+          // ANI n
+          case 0xE6:
+            regs.a = andByte(regs.a, nextByte());
+            regs.cycles += 7;
+            break;
+
+          // PCHL
+          case 0xE9:
+            regs.pc = hl();
+            regs.cycles += 4;
+            break;
+
+          // XCHG
+          case 0xEB:
+            w = de();
+            setDE(hl());
+            setHL(w);
+            regs.cycles += 4;
+            break;
+
+          // XRI n
+          case 0xEE:
+            regs.a = xorByte(regs.a, nextByte());
+            regs.cycles += 7;
+            break;
+
+          // DI
+          case 0xF3:
+            regs.inte = 0;
+            regs.cycles += 4;
+            break;
+
+          // ORI n
+          case 0xF6:
+            regs.a = orByte(regs.a, nextByte());
+            regs.cycles += 7;
+            break;
+
+          // SPHL
+          case 0xF9:
+            regs.sp = hl();
+            regs.cycles += 6;
+            break;
+
+          // EI
+          case 0xFB:
+            regs.inte = 1;
+            regs.cycles += 4;
+            break;
+
+          // CPI n
+          case 0xFE:
+            subtractByte(regs.a, nextByte());
+            regs.cycles += 7;
+            break;
+
+          default:
+            regs.cycles += 4;
+            break;
         }
-        regs.a = ((regs.a << 1) & 0xFE) | c;
-        regs.cycles += 4;
-        break;
-
-      // DAD D
-      case 0x19:
-        setHL(addWord(hl(), de()));
-        regs.cycles += 11;
-        break;
-
-      // LDAX D
-      case 0x1A:
-        regs.a = byteAt(de());
-        regs.cycles += 7;
-        break;
-
-      // DCX D
-      case 0x1B:
-        setDE((de() - 1) & 0xFFFF);
-        regs.cycles += 6;
-        break;
-
-      // INR E
-      case 0x1C:
-        regs.e = incrementByte(regs.e);
-        regs.cycles += 5;
-        break;
-
-      // DCR E
-      case 0x1D:
-        regs.e = decrementByte(regs.e);
-        regs.cycles += 5;
-        break;
-
-      // MVI E,n
-      case 0x1E:
-        regs.e = nextByte();
-        regs.cycles += 7;
-        break;
-
-      // RRA
-      case 0x1F: {
-        const cy = (regs.f & CARRY) ? 128 : 0;
-        if (regs.a & 1) {
-          regs.f |= CARRY;
-        } else {
-          regs.f &= ~CARRY & 0xFF;
-        }
-        regs.a = ((regs.a >> 1) & 0x7F) | cy;
-        regs.cycles += 4;
-        break;
       }
-
-      // LXI H,nn
-      case 0x21:
-        setHL(nextWord());
-        regs.cycles += 10;
-        break;
-
-      // SHLD (nn)
-      case 0x22:
-        writeWord(nextWord(), hl());
-        regs.cycles += 16;
-        break;
-
-      // INX H
-      case 0x23:
-        setHL((hl() + 1) & 0xFFFF);
-        regs.cycles += 6;
-        break;
-
-      // INR H
-      case 0x24:
-        regs.h = incrementByte(regs.h);
-        regs.cycles += 5;
-        break;
-
-      // DCR H
-      case 0x25:
-        regs.h = decrementByte(regs.h);
-        regs.cycles += 5;
-        break;
-
-      // MVI H,n
-      case 0x26:
-        regs.h = nextByte();
-        regs.cycles += 7;
-        break;
-
-      // DAA (Decimal Adjust Accumulator)
-      case 0x27: {
-        let temp = regs.a;
-        if (regs.f & CARRY) {
-          temp |= 0x100;
-        }
-        if (regs.f & HALFCARRY) {
-          temp |= 0x200;
-        }
-        const AF = daaTable[temp];
-        regs.a = (AF >> 8) & 0xFF;
-        regs.f = (AF & 0xD7) | 0x02;
-        regs.cycles += 4;
-        break;
-      }
-
-      // DAD H
-      case 0x29:
-        setHL(addWord(hl(), hl()));
-        regs.cycles += 11;
-        break;
-
-      // LHLD (nn)
-      case 0x2A:
-        setHL(getWord(nextWord()));
-        regs.cycles += 16;
-        break;
-
-      // DCX H
-      case 0x2B:
-        setHL((hl() - 1) & 0xFFFF);
-        regs.cycles += 6;
-        break;
-
-      // INR L
-      case 0x2C:
-        regs.l = incrementByte(regs.l);
-        regs.cycles += 5;
-        break;
-
-      // DCR L
-      case 0x2D:
-        regs.l = decrementByte(regs.l);
-        regs.cycles += 5;
-        break;
-
-      // MVI L,n
-      case 0x2E:
-        regs.l = nextByte();
-        regs.cycles += 7;
-        break;
-
-      // CMA
-      case 0x2F:
-        regs.a ^= 0xFF;
-        regs.cycles += 4;
-        break;
-
-      // LXI SP,nn
-      case 0x31:
-        regs.sp = nextWord();
-        regs.cycles += 10;
-        break;
-
-      // STA (nn)
-      case 0x32:
-        writeByte(nextWord(), regs.a);
-        regs.cycles += 13;
-        break;
-
-      // INX SP
-      case 0x33:
-        regs.sp = (regs.sp + 1) & 0xFFFF;
-        regs.cycles += 6;
-        break;
-
-      // INR M
-      case 0x34:
-        addr = hl();
-        writeByte(addr, incrementByte(byteAt(addr)));
-        regs.cycles += 10;
-        break;
-
-      // DCR M
-      case 0x35:
-        addr = hl();
-        writeByte(addr, decrementByte(byteAt(addr)));
-        regs.cycles += 10;
-        break;
-
-      // MVI M,n
-      case 0x36:
-        writeByte(hl(), nextByte());
-        regs.cycles += 10;
-        break;
-
-      // STC
-      case 0x37:
-        regs.f |= CARRY;
-        regs.cycles += 4;
-        break;
-
-      // DAD SP
-      case 0x39:
-        setHL(addWord(hl(), regs.sp));
-        regs.cycles += 11;
-        break;
-
-      // LDA (nn)
-      case 0x3A:
-        regs.a = byteAt(nextWord());
-        regs.cycles += 13;
-        break;
-
-      // DCX SP
-      case 0x3B:
-        regs.sp = (regs.sp - 1) & 0xFFFF;
-        regs.cycles += 6;
-        break;
-
-      // INR A
-      case 0x3C:
-        regs.a = incrementByte(regs.a);
-        regs.cycles += 5;
-        break;
-
-      // DCR A
-      case 0x3D:
-        regs.a = decrementByte(regs.a);
-        regs.cycles += 5;
-        break;
-
-      // MVI A,n
-      case 0x3E:
-        regs.a = nextByte();
-        regs.cycles += 7;
-        break;
-
-      // CMC
-      case 0x3F:
-        regs.f ^= CARRY;
-        regs.cycles += 4;
-        break;
-
-      // MOV B,B through MOV A,A (0x40-0x7F)
-      // MOV r1,r2
-      case 0x40: regs.b = regs.b; regs.cycles += 5; break;
-      case 0x41: regs.b = regs.c; regs.cycles += 5; break;
-      case 0x42: regs.b = regs.d; regs.cycles += 5; break;
-      case 0x43: regs.b = regs.e; regs.cycles += 5; break;
-      case 0x44: regs.b = regs.h; regs.cycles += 5; break;
-      case 0x45: regs.b = regs.l; regs.cycles += 5; break;
-      case 0x46: regs.b = byteAt(hl()); regs.cycles += 7; break;
-      case 0x47: regs.b = regs.a; regs.cycles += 5; break;
-
-      case 0x48: regs.c = regs.b; regs.cycles += 5; break;
-      case 0x49: regs.c = regs.c; regs.cycles += 5; break;
-      case 0x4A: regs.c = regs.d; regs.cycles += 5; break;
-      case 0x4B: regs.c = regs.e; regs.cycles += 5; break;
-      case 0x4C: regs.c = regs.h; regs.cycles += 5; break;
-      case 0x4D: regs.c = regs.l; regs.cycles += 5; break;
-      case 0x4E: regs.c = byteAt(hl()); regs.cycles += 7; break;
-      case 0x4F: regs.c = regs.a; regs.cycles += 5; break;
-
-      case 0x50: regs.d = regs.b; regs.cycles += 5; break;
-      case 0x51: regs.d = regs.c; regs.cycles += 5; break;
-      case 0x52: regs.d = regs.d; regs.cycles += 5; break;
-      case 0x53: regs.d = regs.e; regs.cycles += 5; break;
-      case 0x54: regs.d = regs.h; regs.cycles += 5; break;
-      case 0x55: regs.d = regs.l; regs.cycles += 5; break;
-      case 0x56: regs.d = byteAt(hl()); regs.cycles += 7; break;
-      case 0x57: regs.d = regs.a; regs.cycles += 5; break;
-
-      case 0x58: regs.e = regs.b; regs.cycles += 5; break;
-      case 0x59: regs.e = regs.c; regs.cycles += 5; break;
-      case 0x5A: regs.e = regs.d; regs.cycles += 5; break;
-      case 0x5B: regs.e = regs.e; regs.cycles += 5; break;
-      case 0x5C: regs.e = regs.h; regs.cycles += 5; break;
-      case 0x5D: regs.e = regs.l; regs.cycles += 5; break;
-      case 0x5E: regs.e = byteAt(hl()); regs.cycles += 7; break;
-      case 0x5F: regs.e = regs.a; regs.cycles += 5; break;
-
-      case 0x60: regs.h = regs.b; regs.cycles += 5; break;
-      case 0x61: regs.h = regs.c; regs.cycles += 5; break;
-      case 0x62: regs.h = regs.d; regs.cycles += 5; break;
-      case 0x63: regs.h = regs.e; regs.cycles += 5; break;
-      case 0x64: regs.h = regs.h; regs.cycles += 5; break;
-      case 0x65: regs.h = regs.l; regs.cycles += 5; break;
-      case 0x66: regs.h = byteAt(hl()); regs.cycles += 7; break;
-      case 0x67: regs.h = regs.a; regs.cycles += 5; break;
-
-      case 0x68: regs.l = regs.b; regs.cycles += 5; break;
-      case 0x69: regs.l = regs.c; regs.cycles += 5; break;
-      case 0x6A: regs.l = regs.d; regs.cycles += 5; break;
-      case 0x6B: regs.l = regs.e; regs.cycles += 5; break;
-      case 0x6C: regs.l = regs.h; regs.cycles += 5; break;
-      case 0x6D: regs.l = regs.l; regs.cycles += 5; break;
-      case 0x6E: regs.l = byteAt(hl()); regs.cycles += 7; break;
-      case 0x6F: regs.l = regs.a; regs.cycles += 5; break;
-
-      case 0x70: writeByte(hl(), regs.b); regs.cycles += 7; break;
-      case 0x71: writeByte(hl(), regs.c); regs.cycles += 7; break;
-      case 0x72: writeByte(hl(), regs.d); regs.cycles += 7; break;
-      case 0x73: writeByte(hl(), regs.e); regs.cycles += 7; break;
-      case 0x74: writeByte(hl(), regs.h); regs.cycles += 7; break;
-      case 0x75: writeByte(hl(), regs.l); regs.cycles += 7; break;
-
-      // HALT
-      case 0x76:
-        regs.cycles += 7;
-        regs.halted = 1;
-        break;
-
-      case 0x77: writeByte(hl(), regs.a); regs.cycles += 7; break;
-
-      case 0x78: regs.a = regs.b; regs.cycles += 5; break;
-      case 0x79: regs.a = regs.c; regs.cycles += 5; break;
-      case 0x7A: regs.a = regs.d; regs.cycles += 5; break;
-      case 0x7B: regs.a = regs.e; regs.cycles += 5; break;
-      case 0x7C: regs.a = regs.h; regs.cycles += 5; break;
-      case 0x7D: regs.a = regs.l; regs.cycles += 5; break;
-      case 0x7E: regs.a = byteAt(hl()); regs.cycles += 7; break;
-      case 0x7F: regs.a = regs.a; regs.cycles += 5; break;
-
-      // ADD operations (0x80-0x87)
-      case 0x80: regs.a = addByte(regs.a, regs.b); regs.cycles += 4; break;
-      case 0x81: regs.a = addByte(regs.a, regs.c); regs.cycles += 4; break;
-      case 0x82: regs.a = addByte(regs.a, regs.d); regs.cycles += 4; break;
-      case 0x83: regs.a = addByte(regs.a, regs.e); regs.cycles += 4; break;
-      case 0x84: regs.a = addByte(regs.a, regs.h); regs.cycles += 4; break;
-      case 0x85: regs.a = addByte(regs.a, regs.l); regs.cycles += 4; break;
-      case 0x86: regs.a = addByte(regs.a, byteAt(hl())); regs.cycles += 7; break;
-      case 0x87: regs.a = addByte(regs.a, regs.a); regs.cycles += 4; break;
-
-      // ADC operations (0x88-0x8F)
-      case 0x88: regs.a = addByteWithCarry(regs.a, regs.b); regs.cycles += 4; break;
-      case 0x89: regs.a = addByteWithCarry(regs.a, regs.c); regs.cycles += 4; break;
-      case 0x8A: regs.a = addByteWithCarry(regs.a, regs.d); regs.cycles += 4; break;
-      case 0x8B: regs.a = addByteWithCarry(regs.a, regs.e); regs.cycles += 4; break;
-      case 0x8C: regs.a = addByteWithCarry(regs.a, regs.h); regs.cycles += 4; break;
-      case 0x8D: regs.a = addByteWithCarry(regs.a, regs.l); regs.cycles += 4; break;
-      case 0x8E: regs.a = addByteWithCarry(regs.a, byteAt(hl())); regs.cycles += 7; break;
-      case 0x8F: regs.a = addByteWithCarry(regs.a, regs.a); regs.cycles += 4; break;
-
-      // SUB operations (0x90-0x97)
-      case 0x90: regs.a = subtractByte(regs.a, regs.b); regs.cycles += 4; break;
-      case 0x91: regs.a = subtractByte(regs.a, regs.c); regs.cycles += 4; break;
-      case 0x92: regs.a = subtractByte(regs.a, regs.d); regs.cycles += 4; break;
-      case 0x93: regs.a = subtractByte(regs.a, regs.e); regs.cycles += 4; break;
-      case 0x94: regs.a = subtractByte(regs.a, regs.h); regs.cycles += 4; break;
-      case 0x95: regs.a = subtractByte(regs.a, regs.l); regs.cycles += 4; break;
-      case 0x96: regs.a = subtractByte(regs.a, byteAt(hl())); regs.cycles += 7; break;
-      case 0x97: regs.a = subtractByte(regs.a, regs.a); regs.cycles += 4; break;
-
-      // SBB operations (0x98-0x9F)
-      case 0x98: regs.a = subtractByteWithCarry(regs.a, regs.b); regs.cycles += 4; break;
-      case 0x99: regs.a = subtractByteWithCarry(regs.a, regs.c); regs.cycles += 4; break;
-      case 0x9A: regs.a = subtractByteWithCarry(regs.a, regs.d); regs.cycles += 4; break;
-      case 0x9B: regs.a = subtractByteWithCarry(regs.a, regs.e); regs.cycles += 4; break;
-      case 0x9C: regs.a = subtractByteWithCarry(regs.a, regs.h); regs.cycles += 4; break;
-      case 0x9D: regs.a = subtractByteWithCarry(regs.a, regs.l); regs.cycles += 4; break;
-      case 0x9E: regs.a = subtractByteWithCarry(regs.a, byteAt(hl())); regs.cycles += 7; break;
-      case 0x9F: regs.a = subtractByteWithCarry(regs.a, regs.a); regs.cycles += 4; break;
-
-      // ANA operations (0xA0-0xA7)
-      case 0xA0: regs.a = andByte(regs.a, regs.b); regs.cycles += 4; break;
-      case 0xA1: regs.a = andByte(regs.a, regs.c); regs.cycles += 4; break;
-      case 0xA2: regs.a = andByte(regs.a, regs.d); regs.cycles += 4; break;
-      case 0xA3: regs.a = andByte(regs.a, regs.e); regs.cycles += 4; break;
-      case 0xA4: regs.a = andByte(regs.a, regs.h); regs.cycles += 4; break;
-      case 0xA5: regs.a = andByte(regs.a, regs.l); regs.cycles += 4; break;
-      case 0xA6: regs.a = andByte(regs.a, byteAt(hl())); regs.cycles += 7; break;
-      case 0xA7: regs.a = andByte(regs.a, regs.a); regs.cycles += 4; break;
-
-      // XRA operations (0xA8-0xAF)
-      case 0xA8: regs.a = xorByte(regs.a, regs.b); regs.cycles += 4; break;
-      case 0xA9: regs.a = xorByte(regs.a, regs.c); regs.cycles += 4; break;
-      case 0xAA: regs.a = xorByte(regs.a, regs.d); regs.cycles += 4; break;
-      case 0xAB: regs.a = xorByte(regs.a, regs.e); regs.cycles += 4; break;
-      case 0xAC: regs.a = xorByte(regs.a, regs.h); regs.cycles += 4; break;
-      case 0xAD: regs.a = xorByte(regs.a, regs.l); regs.cycles += 4; break;
-      case 0xAE: regs.a = xorByte(regs.a, byteAt(hl())); regs.cycles += 7; break;
-      case 0xAF: regs.a = xorByte(regs.a, regs.a); regs.cycles += 4; break;
-
-      // ORA operations (0xB0-0xB7)
-      case 0xB0: regs.a = orByte(regs.a, regs.b); regs.cycles += 4; break;
-      case 0xB1: regs.a = orByte(regs.a, regs.c); regs.cycles += 4; break;
-      case 0xB2: regs.a = orByte(regs.a, regs.d); regs.cycles += 4; break;
-      case 0xB3: regs.a = orByte(regs.a, regs.e); regs.cycles += 4; break;
-      case 0xB4: regs.a = orByte(regs.a, regs.h); regs.cycles += 4; break;
-      case 0xB5: regs.a = orByte(regs.a, regs.l); regs.cycles += 4; break;
-      case 0xB6: regs.a = orByte(regs.a, byteAt(hl())); regs.cycles += 7; break;
-      case 0xB7: regs.a = orByte(regs.a, regs.a); regs.cycles += 4; break;
-
-      // CMP operations (0xB8-0xBF)
-      case 0xB8: subtractByte(regs.a, regs.b); regs.cycles += 4; break;
-      case 0xB9: subtractByte(regs.a, regs.c); regs.cycles += 4; break;
-      case 0xBA: subtractByte(regs.a, regs.d); regs.cycles += 4; break;
-      case 0xBB: subtractByte(regs.a, regs.e); regs.cycles += 4; break;
-      case 0xBC: subtractByte(regs.a, regs.h); regs.cycles += 4; break;
-      case 0xBD: subtractByte(regs.a, regs.l); regs.cycles += 4; break;
-      case 0xBE: subtractByte(regs.a, byteAt(hl())); regs.cycles += 7; break;
-      case 0xBF: subtractByte(regs.a, regs.a); regs.cycles += 4; break;
-
-      // RNZ
-      case 0xC0:
-        if (regs.f & ZERO) {
-          regs.cycles += 5;
-        } else {
-          regs.pc = pop();
-          regs.cycles += 11;
-        }
-        break;
-
-      // POP BC
-      case 0xC1:
-        setBC(pop());
-        regs.cycles += 10;
-        break;
-
-      // JNZ nn
-      case 0xC2:
-        if (regs.f & ZERO) {
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        } else {
-          regs.pc = nextWord();
-        }
-        regs.cycles += 10;
-        break;
-
-      // JMP nn (also 0xCB)
-      case 0xC3:
-      case 0xCB:
-        regs.pc = getWord(regs.pc);
-        regs.cycles += 10;
-        break;
-
-      // CNZ nn
-      case 0xC4:
-        if (regs.f & ZERO) {
-          regs.cycles += 11;
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        } else {
-          regs.cycles += 17;
-          w = nextWord();
-          push(regs.pc);
-          regs.pc = w;
-        }
-        break;
-
-      // PUSH BC
-      case 0xC5:
-        push(bc());
-        regs.cycles += 11;
-        break;
-
-      // ADI n
-      case 0xC6:
-        regs.a = addByte(regs.a, nextByte());
-        regs.cycles += 7;
-        break;
-
-      // RST 0
-      case 0xC7:
-        push(regs.pc);
-        regs.pc = 0;
-        regs.cycles += 11;
-        break;
-
-      // RZ
-      case 0xC8:
-        if (regs.f & ZERO) {
-          regs.pc = pop();
-          regs.cycles += 11;
-        } else {
-          regs.cycles += 5;
-        }
-        break;
-
-      // RET (also 0xD9)
-      case 0xC9:
-      case 0xD9:
-        regs.pc = pop();
-        regs.cycles += 10;
-        break;
-
-      // JZ nn
-      case 0xCA:
-        if (regs.f & ZERO) {
-          regs.pc = nextWord();
-        } else {
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        }
-        regs.cycles += 10;
-        break;
-
-      // CZ nn
-      case 0xCC:
-        if (regs.f & ZERO) {
-          regs.cycles += 17;
-          w = nextWord();
-          push(regs.pc);
-          regs.pc = w;
-        } else {
-          regs.cycles += 11;
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        }
-        break;
-
-      // CALL nn (also 0xDD, 0xED, 0xFD)
-      case 0xCD:
-      case 0xDD:
-      case 0xED:
-      case 0xFD:
-        w = nextWord();
-        push(regs.pc);
-        regs.pc = w;
-        regs.cycles += 17;
-        break;
-
-      // ACI n
-      case 0xCE:
-        regs.a = addByteWithCarry(regs.a, nextByte());
-        regs.cycles += 7;
-        break;
-
-      // RST 1
-      case 0xCF:
-        push(regs.pc);
-        regs.pc = 8;
-        regs.cycles += 11;
-        break;
-
-      // RNC
-      case 0xD0:
-        if (regs.f & CARRY) {
-          regs.cycles += 5;
-        } else {
-          regs.pc = pop();
-          regs.cycles += 11;
-        }
-        break;
-
-      // POP DE
-      case 0xD1:
-        setDE(pop());
-        regs.cycles += 10;
-        break;
-
-      // JNC nn
-      case 0xD2:
-        if (regs.f & CARRY) {
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        } else {
-          regs.pc = nextWord();
-        }
-        regs.cycles += 10;
-        break;
-
-      // OUT (n),A
-      case 0xD3:
-        writePort(nextByte(), regs.a);
-        regs.cycles += 10;
-        break;
-
-      // CNC nn
-      case 0xD4:
-        if (regs.f & CARRY) {
-          regs.cycles += 11;
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        } else {
-          regs.cycles += 17;
-          w = nextWord();
-          push(regs.pc);
-          regs.pc = w;
-        }
-        break;
-
-      // PUSH DE
-      case 0xD5:
-        push(de());
-        regs.cycles += 11;
-        break;
-
-      // SUI n
-      case 0xD6:
-        regs.a = subtractByte(regs.a, nextByte());
-        regs.cycles += 7;
-        break;
-
-      // RST 2
-      case 0xD7:
-        push(regs.pc);
-        regs.pc = 0x10;
-        regs.cycles += 11;
-        break;
-
-      // RC
-      case 0xD8:
-        if (regs.f & CARRY) {
-          regs.pc = pop();
-          regs.cycles += 11;
-        } else {
-          regs.cycles += 5;
-        }
-        break;
-
-      // JC nn
-      case 0xDA:
-        if (regs.f & CARRY) {
-          regs.pc = nextWord();
-        } else {
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        }
-        regs.cycles += 10;
-        break;
-
-      // IN A,(n)
-      case 0xDB:
-        regs.a = readPort(nextByte());
-        regs.cycles += 10;
-        break;
-
-      // CC nn
-      case 0xDC:
-        if (regs.f & CARRY) {
-          regs.cycles += 17;
-          w = nextWord();
-          push(regs.pc);
-          regs.pc = w;
-        } else {
-          regs.cycles += 11;
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        }
-        break;
-
-      // SBI n
-      case 0xDE:
-        regs.a = subtractByteWithCarry(regs.a, nextByte());
-        regs.cycles += 7;
-        break;
-
-      // RST 3
-      case 0xDF:
-        push(regs.pc);
-        regs.pc = 0x18;
-        regs.cycles += 11;
-        break;
-
-      // RPO
-      case 0xE0:
-        if (regs.f & PARITY) {
-          regs.cycles += 5;
-        } else {
-          regs.pc = pop();
-          regs.cycles += 11;
-        }
-        break;
-
-      // POP HL
-      case 0xE1:
-        setHL(pop());
-        regs.cycles += 10;
-        break;
-
-      // JPO nn
-      case 0xE2:
-        if (regs.f & PARITY) {
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        } else {
-          regs.pc = nextWord();
-        }
-        regs.cycles += 10;
-        break;
-
-      // XTHL
-      case 0xE3: {
-        const a = getWord(regs.sp);
-        writeWord(regs.sp, hl());
-        setHL(a);
-        regs.cycles += 4;
-        break;
-      }
-
-      // CPO nn
-      case 0xE4:
-        if (regs.f & PARITY) {
-          regs.cycles += 11;
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        } else {
-          regs.cycles += 17;
-          w = nextWord();
-          push(regs.pc);
-          regs.pc = w;
-        }
-        break;
-
-      // PUSH HL
-      case 0xE5:
-        push(hl());
-        regs.cycles += 11;
-        break;
-
-      // ANI n
-      case 0xE6:
-        regs.a = andByte(regs.a, nextByte());
-        regs.cycles += 7;
-        break;
-
-      // RST 4
-      case 0xE7:
-        push(regs.pc);
-        regs.pc = 0x20;
-        regs.cycles += 11;
-        break;
-
-      // RPE
-      case 0xE8:
-        if (regs.f & PARITY) {
-          regs.pc = pop();
-          regs.cycles += 11;
-        } else {
-          regs.cycles += 5;
-        }
-        break;
-
-      // PCHL
-      case 0xE9:
-        regs.pc = hl();
-        regs.cycles += 4;
-        break;
-
-      // JPE nn
-      case 0xEA:
-        if (regs.f & PARITY) {
-          regs.pc = nextWord();
-        } else {
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        }
-        regs.cycles += 10;
-        break;
-
-      // XCHG
-      case 0xEB:
-        w = de();
-        setDE(hl());
-        setHL(w);
-        regs.cycles += 4;
-        break;
-
-      // CPE nn
-      case 0xEC:
-        if (regs.f & PARITY) {
-          regs.cycles += 17;
-          w = nextWord();
-          push(regs.pc);
-          regs.pc = w;
-        } else {
-          regs.cycles += 11;
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        }
-        break;
-
-      // XRI n
-      case 0xEE:
-        regs.a = xorByte(regs.a, nextByte());
-        regs.cycles += 7;
-        break;
-
-      // RST 5
-      case 0xEF:
-        push(regs.pc);
-        regs.pc = 0x28;
-        regs.cycles += 11;
-        break;
-
-      // RP
-      case 0xF0:
-        if (regs.f & SIGN) {
-          regs.cycles += 5;
-        } else {
-          regs.pc = pop();
-          regs.cycles += 11;
-        }
-        break;
-
-      // POP PSW
-      case 0xF1:
-        setAF(pop());
-        regs.cycles += 10;
-        break;
-
-      // JP nn
-      case 0xF2:
-        if (regs.f & SIGN) {
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        } else {
-          regs.pc = nextWord();
-        }
-        regs.cycles += 10;
-        break;
-
-      // DI
-      case 0xF3:
-        regs.inte = 0;
-        regs.cycles += 4;
-        break;
-
-      // CP nn
-      case 0xF4:
-        if (regs.f & SIGN) {
-          regs.cycles += 11;
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        } else {
-          regs.cycles += 17;
-          w = nextWord();
-          push(regs.pc);
-          regs.pc = w;
-        }
-        break;
-
-      // PUSH PSW
-      case 0xF5:
-        push(af());
-        regs.cycles += 11;
-        break;
-
-      // ORI n
-      case 0xF6:
-        regs.a = orByte(regs.a, nextByte());
-        regs.cycles += 7;
-        break;
-
-      // RST 6
-      case 0xF7:
-        push(regs.pc);
-        regs.pc = 0x30;
-        regs.cycles += 11;
-        break;
-
-      // RM
-      case 0xF8:
-        if (regs.f & SIGN) {
-          regs.pc = pop();
-          regs.cycles += 11;
-        } else {
-          regs.cycles += 5;
-        }
-        break;
-
-      // SPHL
-      case 0xF9:
-        regs.sp = hl();
-        regs.cycles += 6;
-        break;
-
-      // JM nn
-      case 0xFA:
-        if (regs.f & SIGN) {
-          regs.pc = nextWord();
-        } else {
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        }
-        regs.cycles += 10;
-        break;
-
-      // EI
-      case 0xFB:
-        regs.inte = 1;
-        regs.cycles += 4;
-        break;
-
-      // CM nn
-      case 0xFC:
-        if (regs.f & SIGN) {
-          regs.cycles += 17;
-          w = nextWord();
-          push(regs.pc);
-          regs.pc = w;
-        } else {
-          regs.cycles += 11;
-          regs.pc = (regs.pc + 2) & 0xFFFF;
-        }
-        break;
-
-      // CPI n
-      case 0xFE:
-        subtractByte(regs.a, nextByte());
-        regs.cycles += 7;
-        break;
-
-      // RST 7
-      case 0xFF:
-        push(regs.pc);
-        regs.pc = 0x38;
-        regs.cycles += 11;
-        break;
-
-      default:
-        regs.cycles += 4;
-        break;
     }
 
     regs.f &= 0xD7;

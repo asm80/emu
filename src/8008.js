@@ -342,7 +342,7 @@ export default (callbacks) => {
     return (dest >> 2) === condl ? 1 : 0;
   };
 
-  // Register name lookup for 8008: A,B,C,D,E,H,L,M (index 7 = M = memory [HL])
+  // Register name lookup for 8008: 000=A,001=B,010=C,011=D,100=E,101=H,110=L,111=M(mem)
   const REG8008 = ["a", "b", "c", "d", "e", "h", "l", null];
 
   // ALU operation dispatch: ADD,ADC,SUB,SBB,ANA,XRA,ORA,CMP

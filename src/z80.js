@@ -118,30 +118,22 @@ for (let i = 0; i < 256; i++) {
 }
 
 // Half-carry lookup for ADD operations
-const halfcarryAddTable = new Uint8Array(8);
-for (let i = 0; i < 8; i++) {
-  halfcarryAddTable[i] = (i & 0x08) ? FLAG_H : 0;
-}
+// Index = (a_bit3) | (b_bit3 << 1) | (result_bit3 << 2)
+const halfcarryAddTable = new Uint8Array([0, FLAG_H, FLAG_H, FLAG_H, 0, 0, 0, FLAG_H]);
 
 // Half-carry lookup for SUB operations
-const halfcarrySubTable = new Uint8Array(8);
-for (let i = 0; i < 8; i++) {
-  halfcarrySubTable[i] = (i & 0x08) ? FLAG_H : 0;
-}
+// Index = (a_bit3) | (b_bit3 << 1) | (result_bit3 << 2)
+const halfcarrySubTable = new Uint8Array([0, 0, FLAG_H, 0, FLAG_H, 0, FLAG_H, FLAG_H]);
 
 // Overflow lookup for ADD operations
-const overflowAddTable = new Uint8Array(4);
-overflowAddTable[0] = 0;           // pos + pos = pos
-overflowAddTable[1] = 0;           // pos + neg = any
-overflowAddTable[2] = 0;           // neg + pos = any
-overflowAddTable[3] = FLAG_V;      // neg + neg = pos (overflow!)
+// Index = (a_bit7) | (b_bit7 << 1) | (result_bit7 << 2)
+// Overflow when pos+pos=neg (i=4) or neg+neg=pos (i=3)
+const overflowAddTable = new Uint8Array([0, 0, 0, FLAG_V, FLAG_V, 0, 0, 0]);
 
 // Overflow lookup for SUB operations
-const overflowSubTable = new Uint8Array(4);
-overflowSubTable[0] = 0;           // pos - pos = any
-overflowSubTable[1] = FLAG_V;      // pos - neg = neg (overflow!)
-overflowSubTable[2] = 0;           // neg - pos = any
-overflowSubTable[3] = 0;           // neg - neg = any
+// Index = (a_bit7) | (b_bit7 << 1) | (result_bit7 << 2)
+// Overflow when neg-pos=pos (i=1) or pos-neg=neg (i=6)
+const overflowSubTable = new Uint8Array([0, FLAG_V, 0, 0, 0, 0, FLAG_V, 0]);
 
 /**
  * Create a Zilog Z80 CPU emulator instance
@@ -292,7 +284,7 @@ export default (callbacks) => {
     regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
                 halfcarryAddTable[lookup & 0x07] |
                 overflowAddTable[lookup >> 4] |
-                sz53pTable[regs[R_A]];
+                sz53Table[regs[R_A]];
   };
 
   const adcA = (value) => {
@@ -302,7 +294,7 @@ export default (callbacks) => {
     regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
                 halfcarryAddTable[lookup & 0x07] |
                 overflowAddTable[lookup >> 4] |
-                sz53pTable[regs[R_A]];
+                sz53Table[regs[R_A]];
   };
 
   const subA = (value) => {
@@ -313,7 +305,7 @@ export default (callbacks) => {
                 FLAG_N |
                 halfcarrySubTable[lookup & 0x07] |
                 overflowSubTable[lookup >> 4] |
-                sz53pTable[regs[R_A]];
+                sz53Table[regs[R_A]];
   };
 
   const sbcA = (value) => {
@@ -324,7 +316,7 @@ export default (callbacks) => {
                 FLAG_N |
                 halfcarrySubTable[lookup & 0x07] |
                 overflowSubTable[lookup >> 4] |
-                sz53pTable[regs[R_A]];
+                sz53Table[regs[R_A]];
   };
 
   const andA = (value) => {
@@ -480,43 +472,37 @@ export default (callbacks) => {
         break;
       }
 
-      case 0xB0: { // LDIR
-        const value = readByte(regPairs[RP_HL]);
-        writeByte(regPairs[RP_DE], value);
-        regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
-        regPairs[RP_DE] = (regPairs[RP_DE] + 1) & 0xFFFF;
-        regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
-        const n = (value + regs[R_A]) & 0xFF;
+      case 0xB0: { // LDIR - internal loop until BC=0
+        let ldir_val = 0;
+        do {
+          ldir_val = readByte(regPairs[RP_HL]);
+          writeByte(regPairs[RP_DE], ldir_val);
+          regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+          regPairs[RP_DE] = (regPairs[RP_DE] + 1) & 0xFFFF;
+          regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
+          tstates += regPairs[RP_BC] ? 21 : 16;
+        } while (regPairs[RP_BC]);
+        const ldir_n = (ldir_val + regs[R_A]) & 0xFF;
         regs[R_F] = (regs[R_F] & (FLAG_C | FLAG_Z | FLAG_S)) |
-                    (n & FLAG_X) |
-                    ((n & 0x02) ? FLAG_Y : 0);
-        if (regPairs[RP_BC]) {
-          regs[R_F] |= FLAG_P;
-          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
-          tstates += 21;
-        } else {
-          tstates += 16;
-        }
+                    (ldir_n & FLAG_X) |
+                    ((ldir_n & 0x02) ? FLAG_Y : 0);
         break;
       }
 
-      case 0xB8: { // LDDR
-        const value = readByte(regPairs[RP_HL]);
-        writeByte(regPairs[RP_DE], value);
-        regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
-        regPairs[RP_DE] = (regPairs[RP_DE] - 1) & 0xFFFF;
-        regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
-        const n = (value + regs[R_A]) & 0xFF;
+      case 0xB8: { // LDDR - internal loop until BC=0
+        let lddr_val = 0;
+        do {
+          lddr_val = readByte(regPairs[RP_HL]);
+          writeByte(regPairs[RP_DE], lddr_val);
+          regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+          regPairs[RP_DE] = (regPairs[RP_DE] - 1) & 0xFFFF;
+          regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
+          tstates += regPairs[RP_BC] ? 21 : 16;
+        } while (regPairs[RP_BC]);
+        const lddr_n = (lddr_val + regs[R_A]) & 0xFF;
         regs[R_F] = (regs[R_F] & (FLAG_C | FLAG_Z | FLAG_S)) |
-                    (n & FLAG_X) |
-                    ((n & 0x02) ? FLAG_Y : 0);
-        if (regPairs[RP_BC]) {
-          regs[R_F] |= FLAG_P;
-          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
-          tstates += 21;
-        } else {
-          tstates += 16;
-        }
+                    (lddr_n & FLAG_X) |
+                    ((lddr_n & 0x02) ? FLAG_Y : 0);
         break;
       }
 
@@ -557,53 +543,134 @@ export default (callbacks) => {
         break;
       }
 
-      case 0xB1: { // CPIR
-        const value = readByte(regPairs[RP_HL]);
-        const result = (regs[R_A] - value) & 0xFF;
-        const lookup = ((regs[R_A] & 0x08) >> 3) | ((value & 0x08) >> 2) | ((result & 0x08) >> 1);
-        regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
-        regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
+      case 0xB1: { // CPIR - internal loop until match or BC=0
+        let cpir_result = 1, cpir_lookup = 0;
+        do {
+          const cpir_val = readByte(regPairs[RP_HL]);
+          cpir_result = (regs[R_A] - cpir_val) & 0xFF;
+          cpir_lookup = ((regs[R_A] & 0x08) >> 3) | ((cpir_val & 0x08) >> 2) | ((cpir_result & 0x08) >> 1);
+          regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+          regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
+          tstates += (regPairs[RP_BC] && cpir_result !== 0) ? 21 : 16;
+        } while (regPairs[RP_BC] && cpir_result !== 0);
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup] |
-                    (result ? 0 : FLAG_Z) |
-                    (result & FLAG_S);
-        let n = result;
-        if (regs[R_F] & FLAG_H) n--;
-        regs[R_F] |= (n & FLAG_X) | ((n & 0x02) ? FLAG_Y : 0);
-        if (regPairs[RP_BC] && result !== 0) {
-          regs[R_F] |= FLAG_P;
-          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
-          tstates += 21;
-        } else {
-          if (regPairs[RP_BC]) regs[R_F] |= FLAG_P;
-          tstates += 16;
-        }
+                    (regPairs[RP_BC] ? FLAG_P | FLAG_N : FLAG_N) |
+                    halfcarrySubTable[cpir_lookup] |
+                    (cpir_result ? 0 : FLAG_Z) |
+                    (cpir_result & FLAG_S);
+        let cpir_n = cpir_result;
+        if (regs[R_F] & FLAG_H) cpir_n--;
+        regs[R_F] |= (cpir_n & FLAG_X) | ((cpir_n & 0x02) ? FLAG_Y : 0);
         break;
       }
 
-      case 0xB9: { // CPDR
-        const value = readByte(regPairs[RP_HL]);
-        const result = (regs[R_A] - value) & 0xFF;
-        const lookup = ((regs[R_A] & 0x08) >> 3) | ((value & 0x08) >> 2) | ((result & 0x08) >> 1);
-        regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
-        regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
+      case 0xB9: { // CPDR - internal loop until match or BC=0
+        let cpdr_result = 1, cpdr_lookup = 0;
+        do {
+          const cpdr_val = readByte(regPairs[RP_HL]);
+          cpdr_result = (regs[R_A] - cpdr_val) & 0xFF;
+          cpdr_lookup = ((regs[R_A] & 0x08) >> 3) | ((cpdr_val & 0x08) >> 2) | ((cpdr_result & 0x08) >> 1);
+          regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+          regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
+          tstates += (regPairs[RP_BC] && cpdr_result !== 0) ? 21 : 16;
+        } while (regPairs[RP_BC] && cpdr_result !== 0);
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    FLAG_N |
-                    halfcarrySubTable[lookup] |
-                    (result ? 0 : FLAG_Z) |
-                    (result & FLAG_S);
-        let n = result;
-        if (regs[R_F] & FLAG_H) n--;
-        regs[R_F] |= (n & FLAG_X) | ((n & 0x02) ? FLAG_Y : 0);
-        if (regPairs[RP_BC] && result !== 0) {
-          regs[R_F] |= FLAG_P;
-          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
-          tstates += 21;
-        } else {
-          if (regPairs[RP_BC]) regs[R_F] |= FLAG_P;
-          tstates += 16;
-        }
+                    (regPairs[RP_BC] ? FLAG_P | FLAG_N : FLAG_N) |
+                    halfcarrySubTable[cpdr_lookup] |
+                    (cpdr_result ? 0 : FLAG_Z) |
+                    (cpdr_result & FLAG_S);
+        let cpdr_n = cpdr_result;
+        if (regs[R_F] & FLAG_H) cpdr_n--;
+        regs[R_F] |= (cpdr_n & FLAG_X) | ((cpdr_n & 0x02) ? FLAG_Y : 0);
+        break;
+      }
+
+      // I/O block operations
+      case 0xA2: { // INI - Input and increment
+        const ini_val = portIn ? portIn(regs[R_C]) : 0;
+        writeByte(regPairs[RP_HL], ini_val);
+        regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+        regs[R_B] = (regs[R_B] - 1) & 0xFF;
+        regs[R_F] = (regs[R_B] ? 0 : FLAG_Z) | FLAG_N;
+        tstates += 16;
+        break;
+      }
+
+      case 0xAA: { // IND - Input and decrement
+        const ind_val = portIn ? portIn(regs[R_C]) : 0;
+        writeByte(regPairs[RP_HL], ind_val);
+        regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+        regs[R_B] = (regs[R_B] - 1) & 0xFF;
+        regs[R_F] = (regs[R_B] ? 0 : FLAG_Z) | FLAG_N;
+        tstates += 16;
+        break;
+      }
+
+      case 0xB2: { // INIR - Input, increment and repeat until B=0
+        do {
+          const inir_val = portIn ? portIn(regs[R_C]) : 0;
+          writeByte(regPairs[RP_HL], inir_val);
+          regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+          regs[R_B] = (regs[R_B] - 1) & 0xFF;
+          tstates += regs[R_B] ? 21 : 16;
+        } while (regs[R_B]);
+        regs[R_F] = FLAG_Z | FLAG_N;
+        break;
+      }
+
+      case 0xBA: { // INDR - Input, decrement and repeat until B=0
+        do {
+          const indr_val = portIn ? portIn(regs[R_C]) : 0;
+          writeByte(regPairs[RP_HL], indr_val);
+          regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+          regs[R_B] = (regs[R_B] - 1) & 0xFF;
+          tstates += regs[R_B] ? 21 : 16;
+        } while (regs[R_B]);
+        regs[R_F] = FLAG_Z | FLAG_N;
+        break;
+      }
+
+      case 0xA3: { // OUTI - Output and increment
+        const outi_val = readByte(regPairs[RP_HL]);
+        regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+        regs[R_B] = (regs[R_B] - 1) & 0xFF;
+        if (portOut) portOut(regs[R_C], outi_val);
+        regs[R_F] = (regs[R_B] ? 0 : FLAG_Z) | FLAG_N;
+        tstates += 16;
+        break;
+      }
+
+      case 0xAB: { // OUTD - Output and decrement
+        const outd_val = readByte(regPairs[RP_HL]);
+        regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+        regs[R_B] = (regs[R_B] - 1) & 0xFF;
+        if (portOut) portOut(regs[R_C], outd_val);
+        regs[R_F] = (regs[R_B] ? 0 : FLAG_Z) | FLAG_N;
+        tstates += 16;
+        break;
+      }
+
+      case 0xB3: { // OTIR - Output, increment and repeat until B=0
+        do {
+          const otir_val = readByte(regPairs[RP_HL]);
+          regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+          regs[R_B] = (regs[R_B] - 1) & 0xFF;
+          if (portOut) portOut(regs[R_C], otir_val);
+          tstates += regs[R_B] ? 21 : 16;
+        } while (regs[R_B]);
+        regs[R_F] = FLAG_Z | FLAG_N;
+        break;
+      }
+
+      case 0xBB: { // OTDR - Output, decrement and repeat until B=0
+        do {
+          const otdr_val = readByte(regPairs[RP_HL]);
+          regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+          regs[R_B] = (regs[R_B] - 1) & 0xFF;
+          if (portOut) portOut(regs[R_C], otdr_val);
+          tstates += regs[R_B] ? 21 : 16;
+        } while (regs[R_B]);
+        regs[R_F] = FLAG_Z | FLAG_N;
         break;
       }
 
@@ -1165,7 +1232,7 @@ export default (callbacks) => {
         const result = (value + 1) & 0xFF;
         writeByte(addr, result);
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     ((value & 0x0F) === 0x0F ? FLAG_H : 0) |
                     ((value === 0x7F) ? FLAG_V : 0);
         regs[R_F] &= ~FLAG_N;
@@ -1181,7 +1248,7 @@ export default (callbacks) => {
         const result = (value - 1) & 0xFF;
         writeByte(addr, result);
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     FLAG_N |
                     ((value & 0x0F) === 0 ? FLAG_H : 0) |
                     ((value === 0x80) ? FLAG_V : 0);
@@ -1463,7 +1530,7 @@ export default (callbacks) => {
         const result = (val + 1) & 0xFF;
         regs[R_B] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) | // Preserve carry
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
                     ((val === 0x7F) ? FLAG_V : 0);
         regs[R_F] &= ~FLAG_N; // Clear N
@@ -1476,7 +1543,7 @@ export default (callbacks) => {
         const result = (val - 1) & 0xFF;
         regs[R_B] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) | // Preserve carry
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     FLAG_N |
                     ((val & 0x0F) === 0 ? FLAG_H : 0) |
                     ((val === 0x80) ? FLAG_V : 0);
@@ -1536,7 +1603,7 @@ export default (callbacks) => {
         const result = (val + 1) & 0xFF;
         regs[R_C] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
                     ((val === 0x7F) ? FLAG_V : 0);
         regs[R_F] &= ~FLAG_N;
@@ -1549,7 +1616,7 @@ export default (callbacks) => {
         const result = (val - 1) & 0xFF;
         regs[R_C] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     FLAG_N |
                     ((val & 0x0F) === 0 ? FLAG_H : 0) |
                     ((val === 0x80) ? FLAG_V : 0);
@@ -1606,7 +1673,7 @@ export default (callbacks) => {
         const result = (val + 1) & 0xFF;
         regs[R_D] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
                     ((val === 0x7F) ? FLAG_V : 0);
         regs[R_F] &= ~FLAG_N;
@@ -1619,7 +1686,7 @@ export default (callbacks) => {
         const result = (val - 1) & 0xFF;
         regs[R_D] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     FLAG_N |
                     ((val & 0x0F) === 0 ? FLAG_H : 0) |
                     ((val === 0x80) ? FLAG_V : 0);
@@ -1679,7 +1746,7 @@ export default (callbacks) => {
         const result = (val + 1) & 0xFF;
         regs[R_E] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
                     ((val === 0x7F) ? FLAG_V : 0);
         regs[R_F] &= ~FLAG_N;
@@ -1692,7 +1759,7 @@ export default (callbacks) => {
         const result = (val - 1) & 0xFF;
         regs[R_E] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     FLAG_N |
                     ((val & 0x0F) === 0 ? FLAG_H : 0) |
                     ((val === 0x80) ? FLAG_V : 0);
@@ -1749,7 +1816,7 @@ export default (callbacks) => {
         const result = (val + 1) & 0xFF;
         regs[R_H] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
                     ((val === 0x7F) ? FLAG_V : 0);
         regs[R_F] &= ~FLAG_N;
@@ -1762,7 +1829,7 @@ export default (callbacks) => {
         const result = (val - 1) & 0xFF;
         regs[R_H] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     FLAG_N |
                     ((val & 0x0F) === 0 ? FLAG_H : 0) |
                     ((val === 0x80) ? FLAG_V : 0);
@@ -1838,7 +1905,7 @@ export default (callbacks) => {
         const result = (val + 1) & 0xFF;
         regs[R_L] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
                     ((val === 0x7F) ? FLAG_V : 0);
         regs[R_F] &= ~FLAG_N;
@@ -1851,7 +1918,7 @@ export default (callbacks) => {
         const result = (val - 1) & 0xFF;
         regs[R_L] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     FLAG_N |
                     ((val & 0x0F) === 0 ? FLAG_H : 0) |
                     ((val === 0x80) ? FLAG_V : 0);
@@ -1906,7 +1973,7 @@ export default (callbacks) => {
         const result = (val + 1) & 0xFF;
         writeByte(addr, result);
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
                     ((val === 0x7F) ? FLAG_V : 0);
         regs[R_F] &= ~FLAG_N;
@@ -1920,7 +1987,7 @@ export default (callbacks) => {
         const result = (val - 1) & 0xFF;
         writeByte(addr, result);
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     FLAG_N |
                     ((val & 0x0F) === 0 ? FLAG_H : 0) |
                     ((val === 0x80) ? FLAG_V : 0);
@@ -1984,7 +2051,7 @@ export default (callbacks) => {
         const result = (val + 1) & 0xFF;
         regs[R_A] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
                     ((val === 0x7F) ? FLAG_V : 0);
         regs[R_F] &= ~FLAG_N;
@@ -1997,7 +2064,7 @@ export default (callbacks) => {
         const result = (val - 1) & 0xFF;
         regs[R_A] = result;
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[result] |
+                    sz53Table[result] |
                     FLAG_N |
                     ((val & 0x0F) === 0 ? FLAG_H : 0) |
                     ((val === 0x80) ? FLAG_V : 0);
@@ -2072,7 +2139,7 @@ export default (callbacks) => {
         regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
                     halfcarryAddTable[lookup & 0x07] |
                     overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
+                    sz53Table[regs[R_A]];
         tstates += 7;
         break;
       }
@@ -2140,7 +2207,7 @@ export default (callbacks) => {
         regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
                     halfcarryAddTable[lookup & 0x07] |
                     overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
+                    sz53Table[regs[R_A]];
         tstates += 7;
         break;
       }
@@ -2210,7 +2277,7 @@ export default (callbacks) => {
                     FLAG_N |
                     halfcarrySubTable[lookup & 0x07] |
                     overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
+                    sz53Table[regs[R_A]];
         tstates += 7;
         break;
       }
@@ -2282,7 +2349,7 @@ export default (callbacks) => {
                     FLAG_N |
                     halfcarrySubTable[lookup & 0x07] |
                     overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
+                    sz53Table[regs[R_A]];
         tstates += 7;
         break;
       }
