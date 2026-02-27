@@ -2038,24 +2038,23 @@ QUnit.module("Motorola 6800 CPU Emulator", () => {
       const { cpu, mem } = createTestCPU();
 
       // Simulate interrupt stack frame
-      mem[0x1000] = 0x10; // Page 2
-      mem[0x1001] = 0xCE; // LDS immediate
-      mem[0x1002] = 0xEF;
-      mem[0x1003] = 0xF2; // SP = 0xEFF2
+      mem[0x1000] = 0x8E; // LDS immediate
+      mem[0x1001] = 0xEF;
+      mem[0x1002] = 0xF2; // SP = 0xEFF2
 
-      // Stack contents (as if pushed by interrupt)
-      mem[0xEFF3] = 0x3F; // Flags
+      // Stack contents (as if pushed by interrupt): CC, B, A, XH, XL, PCH, PCL
+      mem[0xEFF3] = 0x3F; // CC (flags)
       mem[0xEFF4] = 0x99; // B
       mem[0xEFF5] = 0x88; // A
-      mem[0xEFF6] = 0xCD; // X low
-      mem[0xEFF7] = 0xAB; // X high
-      mem[0xEFF8] = 0x34; // PC low
-      mem[0xEFF9] = 0x12; // PC high
+      mem[0xEFF6] = 0xAB; // XH
+      mem[0xEFF7] = 0xCD; // XL
+      mem[0xEFF8] = 0x12; // PCH
+      mem[0xEFF9] = 0x34; // PCL
 
-      mem[0x1004] = 0x3B; // RTI
+      mem[0x1003] = 0x3B; // RTI
 
       cpu.reset();
-      cpu.steps(4); // LDS
+      cpu.steps(3); // LDS (3 cycles)
       cpu.steps(10); // RTI (pulls all registers)
 
       const state = cpu.status();
@@ -2383,7 +2382,7 @@ QUnit.module("Motorola 6800 CPU Emulator", () => {
       mem[0x1002] = 0x00;
 
       cpu.reset();
-      cpu.steps(7); // LSR extended
+      cpu.steps(6); // LSR extended (6 cycles)
 
       // 10000011 >> 1 (logical) = 01000001, carry=1
       assert.equal(mem[0x5000], 0x41, "Logical shift right (zero fill)");
@@ -2477,7 +2476,7 @@ QUnit.module("Motorola 6800 CPU Emulator", () => {
       mem[0x1002] = 0x00;
 
       cpu.reset();
-      cpu.steps(7); // ASR extended
+      cpu.steps(6); // ASR extended (6 cycles)
 
       // 10000001 >> 1 (arithmetic) = 11000000, carry=1
       assert.equal(mem[0x3000], 0xC0, "Arithmetic shift right (sign extended)");
@@ -2626,7 +2625,7 @@ QUnit.module("Motorola 6800 CPU Emulator", () => {
 
       cpu.reset();
       cpu.steps(2); // LDB
-      cpu.steps(4); // CMPB
+      cpu.steps(3); // CMPB direct (3 cycles)
 
       assert.ok(cpu.status().flags & 0x01, "Carry set when B < operand");
     });
@@ -2662,7 +2661,7 @@ QUnit.module("Motorola 6800 CPU Emulator", () => {
 
       cpu.reset();
       cpu.steps(2); // LDB
-      cpu.steps(5); // CMPB extended
+      cpu.steps(4); // CMPB extended (4 cycles)
 
       assert.ok(cpu.status().flags & 0x01, "Carry set in extended CMPB");
     });

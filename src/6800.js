@@ -152,7 +152,7 @@ export const disasm = (i, a, b, pc) => {
   let s = sx[0];
   const d8 = toHex2(a);
   const rel8 = (a < 128) ? toHex4(a + pc + 2) : toHex4(pc + a - 256 + 2);
-  s = s.replace("~", " $" + rel8);
+  s = s.replace("~", "$" + rel8);
   s = s.replace("@", "$" + d8);
   const d16 = toHex2(a) + toHex2(b);
   s = s.replace("^", "$" + d16);

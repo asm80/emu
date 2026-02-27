@@ -211,13 +211,14 @@ export default (callbacks) => {
 
   /**
    * Calculate auxiliary carry for SUB operations
-   * Hardware-accurate implementation using lookup table
+   * Uses XOR of bit 3 of operands and result (standard 8080/8085 formula).
    */
   const acSUB = (a1, a2, r) => {
-    const aux = [HALFCARRY, HALFCARRY, 0, HALFCARRY, 0, HALFCARRY, 0, 0];
-    const dis = ((r & 8) >> 1) | ((a2 & 8) >> 2) | ((a1 & 8) >> 3);
-    const ac = aux[dis];
-    regs.f = (regs.f & ~HALFCARRY) | ac;
+    if ((a1 ^ a2 ^ r) & 0x10) {
+      regs.f |= HALFCARRY;
+    } else {
+      regs.f &= ~HALFCARRY & 0xFF;
+    }
   };
 
   // Arithmetic operations
