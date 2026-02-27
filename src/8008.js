@@ -93,8 +93,8 @@ const initDisasmTable = () => {
 
   // I/O instructions
   for (let port = 0; port < 8; port++) {
-    disasmTable[0x41 | (port << 3)] = [`INP ${port}`, 1];
-    disasmTable[0x51 | (port << 3)] = [`OUT ${port}`, 1];
+    disasmTable[0x41 | (port << 3)] = [`OUT ${port}`, 1];
+    disasmTable[0x43 | (port << 3)] = [`INP ${port}`, 1];
   }
 };
 
@@ -369,7 +369,8 @@ export default (callbacks) => {
     switch (top2) {
       case 0: // 00xxxxxx - Special instructions
         if (i === 0x00 || i === 0xFF) {
-          // HLT
+          // HLT - PC points back at HLT instruction (step() pre-incremented it)
+          regs.pc = (regs.pc - 1) & 0x3FFF;
           regs.halted = 1;
           regs.cycles += 4;
         } else if ((i & 0xC7) === 0x02) {
@@ -458,6 +459,10 @@ export default (callbacks) => {
           }
           regs.cycles += 11;
         } else if ((i & 0xC7) === 0x41) {
+          // Output to port
+          writePort(yyy, regs.a);
+          regs.cycles += 6;
+        } else if ((i & 0xC7) === 0x43) {
           // Input from port
           regs.a = readPort(yyy);
           regs.cycles += 8;
@@ -481,10 +486,6 @@ export default (callbacks) => {
           push(regs.pc);
           regs.pc = w;
           regs.cycles += 11;
-        } else if ((i & 0xC1) === 0x41) {
-          // Output to port
-          writePort(yyy, regs.a);
-          regs.cycles += 6;
         }
         break;
 
@@ -658,6 +659,7 @@ export default (callbacks) => {
   return {
     init,
     reset,
+    step,
     steps,
     trace,
     T,

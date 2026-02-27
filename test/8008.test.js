@@ -65,7 +65,7 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x3FFE] = 0x44; // JMP
       mem[0x3FFF] = 0x00;
       mem[0x0000] = 0x00;
-      cpu.steps(20);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.pc, 0x0000, "PC wraps to 0x0000");
@@ -91,7 +91,7 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x3FEF] = 0x12;
       cpu.set("SP", 0x3FEE);
 
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.pc & 0x3FFF, state.pc, "PC stays in 14-bit range");
@@ -108,7 +108,7 @@ QUnit.module("8008 CPU Emulator", () => {
       for (let i = 0; i < 8; i++) {
         mem[i * 10] = 0x05; // RST 0
         cpu.set("PC", i * 10);
-        cpu.steps(10);
+        cpu.step();
       }
 
       const state = cpu.status();
@@ -125,7 +125,7 @@ QUnit.module("8008 CPU Emulator", () => {
       for (let i = 0; i < 9; i++) {
         mem[i * 10] = 0x05; // RST 0
         cpu.set("PC", i * 10);
-        cpu.steps(10);
+        cpu.step();
       }
 
       const state = cpu.status();
@@ -139,7 +139,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("PC", 0x0100);
       cpu.set("SP", 0x1000);
       mem[0x0100] = 0x07; // RET (pop PC from stack)
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.pc, 0, "Empty stack pop returns 0");
@@ -150,7 +150,7 @@ QUnit.module("8008 CPU Emulator", () => {
 
       cpu.set("SP", 0x1000);
       mem[0] = 0x05; // RST 0
-      cpu.steps(10);
+      cpu.step();
 
       let state = cpu.status();
       assert.equal(state.stackDepth, 1, "Stack depth is 1 before reset");
@@ -166,8 +166,8 @@ QUnit.module("8008 CPU Emulator", () => {
       const { cpu, mem, ports } = createTestCPU();
 
       ports[5] = 0x42;
-      mem[0] = 0x41 | (5 << 3); // INP 5
-      cpu.steps(10);
+      mem[0] = 0x43 | (5 << 3); // INP 5
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x42, "Read from port 5");
@@ -177,10 +177,10 @@ QUnit.module("8008 CPU Emulator", () => {
       const { cpu, mem, ports } = createTestCPU();
 
       cpu.set("A", 0x99);
-      mem[0] = 0x51 | (10 << 3); // OUT 10
-      cpu.steps(10);
+      mem[0] = 0x41 | (2 << 3); // OUT 2
+      cpu.step();
 
-      assert.equal(ports[10], 0x99, "Wrote to port 10");
+      assert.equal(ports[2], 0x99, "Wrote to port 2");
     });
   });
 
@@ -192,7 +192,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0] = 0x06; // MVI A
       mem[1] = 0x01;
       mem[2] = 0x80; // ADD A (A = A + A)
-      cpu.steps(20);
+      cpu.step(); // MVI A
+      cpu.step(); // ADD A
 
       const state = cpu.status();
       assert.equal(state.f & 0x10, 0, "No HALFCARRY flag bit set");
@@ -204,7 +205,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("F", 0x01); // Set carry
       cpu.set("A", 0xFF);
       mem[0] = 0x00; // INR A
-      cpu.steps(10);
+      cpu.step();
 
       let state = cpu.status();
       assert.equal(state.a, 0x00, "A wrapped to 0");
@@ -218,7 +219,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("A", 0xFF);
       mem[0] = 0x04; // ADI
       mem[1] = 0x01;
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x00, "A = 0x00");
@@ -233,7 +234,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("A", 0x55);
       mem[0] = 0x24; // ANI
       mem[1] = 0xFF;
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.f & 0x01, 0x00, "Carry cleared by AND");
@@ -247,7 +248,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("A", 0x10);
       cpu.set("B", 0x20);
       mem[0] = 0x80; // ADD B
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x30, "A = 0x30");
@@ -259,8 +260,8 @@ QUnit.module("8008 CPU Emulator", () => {
 
       cpu.set("A", 0x20);
       cpu.set("B", 0x10);
-      mem[0] = 0x90; // SUB B
-      cpu.steps(10);
+      mem[0] = 0x91; // SUB B
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x10, "A = 0x10");
@@ -272,8 +273,8 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("F", 0x01); // Set carry
       cpu.set("A", 0xF0);
       cpu.set("B", 0x0F);
-      mem[0] = 0xA0; // ANA B
-      cpu.steps(10);
+      mem[0] = 0xA1; // ANA B
+      cpu.step();
 
       let state = cpu.status();
       assert.equal(state.a, 0x00, "A = 0x00");
@@ -286,7 +287,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("A", 0x42);
       cpu.set("B", 0x42);
       mem[0] = 0xB8; // CMP B
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x42, "A unchanged");
@@ -298,7 +299,7 @@ QUnit.module("8008 CPU Emulator", () => {
 
       cpu.set("A", 0x42);
       mem[0] = 0x00; // INR A
-      cpu.steps(10);
+      cpu.step();
 
       let state = cpu.status();
       assert.equal(state.a, 0x43, "A incremented");
@@ -306,7 +307,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.reset();
       cpu.set("A", 0x42);
       mem[0] = 0x01; // DCR A
-      cpu.steps(10);
+      cpu.step();
 
       state = cpu.status();
       assert.equal(state.a, 0x41, "A decremented");
@@ -319,7 +320,7 @@ QUnit.module("8008 CPU Emulator", () => {
 
       cpu.set("B", 0x42);
       mem[0] = 0xC1; // MOV A,B
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x42, "A = B");
@@ -332,7 +333,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("L", 0x00);
       mem[0x1000] = 0x99;
       mem[0] = 0xC7; // MOV A,M
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x99, "A loaded from memory");
@@ -343,7 +344,7 @@ QUnit.module("8008 CPU Emulator", () => {
 
       mem[0] = 0x06; // MVI A
       mem[1] = 0x42;
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x42, "A loaded immediate");
@@ -357,7 +358,7 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0] = 0x44; // JMP
       mem[1] = 0x34;
       mem[2] = 0x12;
-      cpu.steps(15);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.pc, 0x1234, "PC = 0x1234");
@@ -371,7 +372,7 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0] = 0x40; // JNC
       mem[1] = 0x00;
       mem[2] = 0x10;
-      cpu.steps(15);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.pc, 0x1000, "JNC taken when carry clear");
@@ -386,7 +387,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0002] = 0x02;
       mem[0x0200] = 0x07; // RET
 
-      cpu.steps(30);
+      cpu.step(); // CALL
+      cpu.step(); // RET
 
       const state = cpu.status();
       assert.equal(state.pc, 0x0003, "Returned after CALL");
@@ -398,7 +400,7 @@ QUnit.module("8008 CPU Emulator", () => {
 
       cpu.set("SP", 0x1000);
       mem[0] = 0x05; // RST 0
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.pc, 0x0000, "PC = vector 0x00");
@@ -412,7 +414,7 @@ QUnit.module("8008 CPU Emulator", () => {
 
       cpu.set("A", 0x81);
       mem[0] = 0x02; // RLC
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x03, "A rotated left");
@@ -424,7 +426,7 @@ QUnit.module("8008 CPU Emulator", () => {
 
       cpu.set("A", 0x81);
       mem[0] = 0x0A; // RRC
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0xC0, "A rotated right");
@@ -437,7 +439,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("A", 0x80);
       cpu.set("F", 0x01); // Set carry
       mem[0] = 0x12; // RAL
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x01, "Carry shifted into bit 0");
@@ -449,7 +451,7 @@ QUnit.module("8008 CPU Emulator", () => {
       cpu.set("A", 0x01);
       cpu.set("F", 0x01); // Set carry
       mem[0] = 0x1A; // RAR
-      cpu.steps(10);
+      cpu.step();
 
       const state = cpu.status();
       assert.equal(state.a, 0x80, "Carry shifted into bit 7");
@@ -499,10 +501,13 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[1] = 0x10;
       mem[2] = 0x0E; // MVI B,$20
       mem[3] = 0x20;
-      mem[4] = 0x80; // ADD B
+      mem[4] = 0x81; // ADD B
       mem[5] = 0x00; // HLT
 
-      cpu.steps(100);
+      cpu.step(); // MVI A,$10
+      cpu.step(); // MVI B,$20
+      cpu.step(); // ADD B
+      cpu.step(); // HLT
 
       const state = cpu.status();
       assert.equal(state.a, 0x30, "A = 0x30");
@@ -523,7 +528,13 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[7] = 0x00;
       mem[8] = 0x00; // HLT
 
-      cpu.steps(500);
+      cpu.step(); // MVI A,$00
+      for (let i = 0; i < 5; i++) {
+        cpu.step(); // INR A
+        cpu.step(); // CPI $05
+        cpu.step(); // JNZ LOOP (3 bytes)
+      }
+      cpu.step(); // HLT
 
       const state = cpu.status();
       assert.equal(state.a, 0x05, "A = 5");
@@ -541,9 +552,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0004] = 0x0C; // ACI 0x05 (add with carry: 0x00 + 0x05 + 1 = 0x06)
       mem[0x0005] = 0x05;
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI (sets carry)
-      cpu.steps(5); // ACI
+      cpu.step(); // LBI
+      cpu.step(); // ADI (sets carry)
+      cpu.step(); // ACI
 
       assert.equal(cpu.status().a, 0x06, "A = 0x00 + 0x05 + carry(1)");
     });
@@ -556,8 +567,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0002] = 0x14; // SBI 0x05 (subtract: 0x10 - 0x05 - 0 = 0x0B)
       mem[0x0003] = 0x05;
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // SBI
+      cpu.step(); // LBI
+      cpu.step(); // SBI
 
       assert.equal(cpu.status().a, 0x0B, "A = 0x10 - 0x05 (no borrow)");
     });
@@ -574,10 +585,10 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0006] = 0x14; // SBI 0x05 (subtract with borrow: 0x10 - 0x05 - carry(1) = 0x0A)
       mem[0x0007] = 0x05;
 
-      cpu.steps(5); // LBI 0xFF
-      cpu.steps(5); // ADI (sets carry)
-      cpu.steps(5); // LBI 0x10
-      cpu.steps(5); // SBI
+      cpu.step(); // LBI 0xFF
+      cpu.step(); // ADI (sets carry)
+      cpu.step(); // LBI 0x10
+      cpu.step(); // SBI
 
       assert.equal(cpu.status().a, 0x0A, "A = 0x10 - 0x05 - 1 (borrow)");
     });
@@ -592,9 +603,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0004] = 0x3C; // XRI 0xAA
       mem[0x0005] = 0xAA;
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI (sets carry)
-      cpu.steps(5); // XRI
+      cpu.step(); // LBI
+      cpu.step(); // ADI (sets carry)
+      cpu.step(); // XRI
 
       const state = cpu.status();
       assert.equal(state.a, 0xAA, "A = 0x00 XOR 0xAA");
@@ -611,9 +622,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0004] = 0x44; // ORI 0x55
       mem[0x0005] = 0x55;
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI (sets carry)
-      cpu.steps(5); // ORI
+      cpu.step(); // LBI
+      cpu.step(); // ADI (sets carry)
+      cpu.step(); // ORI
 
       const state = cpu.status();
       assert.equal(state.a, 0x55, "A = 0x00 OR 0x55");
@@ -630,9 +641,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0004] = 0x34; // NDI 0x0F
       mem[0x0005] = 0x0F;
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI (sets carry)
-      cpu.steps(5); // NDI (AND immediate)
+      cpu.step(); // LBI
+      cpu.step(); // ADI (sets carry)
+      cpu.step(); // NDI (AND immediate)
 
       const state = cpu.status();
       assert.equal(state.a, 0x00, "A = 0x00 AND 0x0F");
@@ -655,8 +666,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0010] = 0x10; // Return PC low
       mem[0x0011] = 0x00; // Return PC high
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RZ
+      cpu.step(); // LBI
+      cpu.step(); // RZ
 
       const state = cpu.status();
       assert.equal(state.pc, 0x0010, "PC = return address (Z flag was set)");
@@ -673,8 +684,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0020] = 0x50; // Return PC low
       mem[0x0021] = 0x00; // Return PC high
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RNZ
+      cpu.step(); // LBI
+      cpu.step(); // RNZ
 
       assert.equal(cpu.status().pc, 0x0050, "Returned when Z clear");
     });
@@ -692,9 +703,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0030] = 0x80; // Return PC low
       mem[0x0031] = 0x00; // Return PC high
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI
-      cpu.steps(10); // RC
+      cpu.step(); // LBI
+      cpu.step(); // ADI
+      cpu.step(); // RC
 
       assert.equal(cpu.status().pc, 0x0080, "Returned when carry set");
     });
@@ -713,9 +724,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0040] = 0xAA;
       mem[0x0041] = 0xBB;
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI
-      cpu.steps(5); // RNC
+      cpu.step(); // LBI
+      cpu.step(); // ADI
+      cpu.step(); // RNC
 
       assert.equal(cpu.status().pc, 0x0005, "Did not return (carry was set)");
     });
@@ -731,8 +742,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0050] = 0xC0; // Return PC low
       mem[0x0051] = 0x00; // Return PC high
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RP
+      cpu.step(); // LBI
+      cpu.step(); // RP
 
       assert.equal(cpu.status().pc, 0x00C0, "Returned when positive");
     });
@@ -748,8 +759,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0060] = 0xD0; // Return PC low
       mem[0x0061] = 0x01; // Return PC high
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RM
+      cpu.step(); // LBI
+      cpu.step(); // RM
 
       assert.equal(cpu.status().pc, 0x01D0, "Returned when negative");
     });
@@ -765,8 +776,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0070] = 0xE0; // Return PC low
       mem[0x0071] = 0x01; // Return PC high
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RPE
+      cpu.step(); // LBI
+      cpu.step(); // RPE
 
       assert.equal(cpu.status().pc, 0x01E0, "Returned when parity even");
     });
@@ -782,8 +793,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0080] = 0xF0; // Return PC low
       mem[0x0081] = 0x02; // Return PC high
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RPO
+      cpu.step(); // LBI
+      cpu.step(); // RPO
 
       assert.equal(cpu.status().pc, 0x02F0, "Returned when parity odd");
     });
@@ -800,8 +811,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0010] = 0xAA;
       mem[0x0011] = 0xBB;
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // RZ (skips)
+      cpu.step(); // LBI
+      cpu.step(); // RZ (skips)
 
       assert.equal(cpu.status().pc, 0x0003, "Did not return (Z flag was clear)");
     });
@@ -816,8 +827,8 @@ QUnit.module("8008 CPU Emulator", () => {
 
       cpu.set("SP", 0x0020);
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // RNZ (skips)
+      cpu.step(); // LBI
+      cpu.step(); // RNZ (skips)
 
       assert.equal(cpu.status().pc, 0x0003, "Did not return (Z flag was set)");
     });
@@ -830,8 +841,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0002] = 0x17; // RC (should NOT return - no carry)
       mem[0x0003] = 0x00; // HLT
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // RC (skips)
+      cpu.step(); // LBI
+      cpu.step(); // RC (skips)
 
       assert.equal(cpu.status().pc, 0x0003, "Did not return (carry was clear)");
     });
@@ -844,8 +855,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0002] = 0x27; // RP (should NOT return)
       mem[0x0003] = 0x00; // HLT
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // RP (skips)
+      cpu.step(); // LBI
+      cpu.step(); // RP (skips)
 
       assert.equal(cpu.status().pc, 0x0003, "Did not return (S flag was set)");
     });
@@ -858,8 +869,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0002] = 0x2F; // RM (should NOT return)
       mem[0x0003] = 0x00; // HLT
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // RM (skips)
+      cpu.step(); // LBI
+      cpu.step(); // RM (skips)
 
       assert.equal(cpu.status().pc, 0x0003, "Did not return (S flag was clear)");
     });
@@ -872,8 +883,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0002] = 0x37; // RPE (should NOT return)
       mem[0x0003] = 0x00; // HLT
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // RPE (skips)
+      cpu.step(); // LBI
+      cpu.step(); // RPE (skips)
 
       assert.equal(cpu.status().pc, 0x0003, "Did not return (parity was odd)");
     });
@@ -886,8 +897,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0002] = 0x3F; // RPO (should NOT return)
       mem[0x0003] = 0x00; // HLT
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // RPO (skips)
+      cpu.step(); // LBI
+      cpu.step(); // RPO (skips)
 
       assert.equal(cpu.status().pc, 0x0003, "Did not return (parity was even)");
     });
@@ -901,8 +912,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x05;
       mem[0x0002] = 0x08; // INB
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // INB
+      cpu.step(); // LBI
+      cpu.step(); // INB
 
       assert.equal(cpu.status().b, 0x06, "B incremented from 5 to 6");
     });
@@ -914,8 +925,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x0A;
       mem[0x0002] = 0x10; // INC
 
-      cpu.steps(5); // LCI
-      cpu.steps(5); // INC
+      cpu.step(); // LCI
+      cpu.step(); // INC
 
       assert.equal(cpu.status().c, 0x0B, "C incremented from 10 to 11");
     });
@@ -927,8 +938,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x14;
       mem[0x0002] = 0x18; // IND
 
-      cpu.steps(5); // LDI
-      cpu.steps(5); // IND
+      cpu.step(); // LDI
+      cpu.step(); // IND
 
       assert.equal(cpu.status().d, 0x15, "D incremented from 20 to 21");
     });
@@ -940,8 +951,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x1E;
       mem[0x0002] = 0x20; // INE
 
-      cpu.steps(5); // LEI
-      cpu.steps(5); // INE
+      cpu.step(); // LEI
+      cpu.step(); // INE
 
       assert.equal(cpu.status().e, 0x1F, "E incremented from 30 to 31");
     });
@@ -953,8 +964,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x28;
       mem[0x0002] = 0x28; // INH
 
-      cpu.steps(5); // LHI
-      cpu.steps(5); // INH
+      cpu.step(); // LHI
+      cpu.step(); // INH
 
       assert.equal(cpu.status().h, 0x29, "H incremented from 40 to 41");
     });
@@ -966,8 +977,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x32;
       mem[0x0002] = 0x30; // INL
 
-      cpu.steps(5); // LLI
-      cpu.steps(5); // INL
+      cpu.step(); // LLI
+      cpu.step(); // INL
 
       assert.equal(cpu.status().l, 0x33, "L incremented from 50 to 51");
     });
@@ -979,8 +990,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x0A;
       mem[0x0002] = 0x09; // DCB
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // DCB
+      cpu.step(); // LBI
+      cpu.step(); // DCB
 
       assert.equal(cpu.status().b, 0x09, "B decremented from 10 to 9");
     });
@@ -992,8 +1003,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x14;
       mem[0x0002] = 0x11; // DCC
 
-      cpu.steps(5); // LCI
-      cpu.steps(5); // DCC
+      cpu.step(); // LCI
+      cpu.step(); // DCC
 
       assert.equal(cpu.status().c, 0x13, "C decremented from 20 to 19");
     });
@@ -1005,8 +1016,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x1E;
       mem[0x0002] = 0x19; // DCD
 
-      cpu.steps(5); // LDI
-      cpu.steps(5); // DCD
+      cpu.step(); // LDI
+      cpu.step(); // DCD
 
       assert.equal(cpu.status().d, 0x1D, "D decremented from 30 to 29");
     });
@@ -1018,8 +1029,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x28;
       mem[0x0002] = 0x21; // DCE
 
-      cpu.steps(5); // LEI
-      cpu.steps(5); // DCE
+      cpu.step(); // LEI
+      cpu.step(); // DCE
 
       assert.equal(cpu.status().e, 0x27, "E decremented from 40 to 39");
     });
@@ -1031,8 +1042,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x32;
       mem[0x0002] = 0x29; // DCH
 
-      cpu.steps(5); // LHI
-      cpu.steps(5); // DCH
+      cpu.step(); // LHI
+      cpu.step(); // DCH
 
       assert.equal(cpu.status().h, 0x31, "H decremented from 50 to 49");
     });
@@ -1044,8 +1055,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x3C;
       mem[0x0002] = 0x31; // DCL
 
-      cpu.steps(5); // LLI
-      cpu.steps(5); // DCL
+      cpu.step(); // LLI
+      cpu.step(); // DCL
 
       assert.equal(cpu.status().l, 0x3B, "L decremented from 60 to 59");
     });
@@ -1061,9 +1072,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x00;
       mem[0x0004] = 0x38; // INM (increment memory at HL)
 
-      cpu.steps(5); // LHI
-      cpu.steps(5); // LLI
-      cpu.steps(10); // INM
+      cpu.step(); // LHI
+      cpu.step(); // LLI
+      cpu.step(); // INM
 
       assert.equal(mem[0x0100], 0x43, "Memory at HL incremented from 0x42 to 0x43");
     });
@@ -1079,9 +1090,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x00;
       mem[0x0004] = 0x39; // DCM (decrement memory at HL)
 
-      cpu.steps(5); // LHI
-      cpu.steps(5); // LLI
-      cpu.steps(10); // DCM
+      cpu.step(); // LHI
+      cpu.step(); // LLI
+      cpu.step(); // DCM
 
       assert.equal(mem[0x0200], 0x54, "Memory at HL decremented from 0x55 to 0x54");
     });
@@ -1097,8 +1108,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x00; // Target low
       mem[0x0004] = 0x01; // Target high = 0x0100
 
-      cpu.steps(5); // LBI
-      cpu.steps(15); // CZ
+      cpu.step(); // LBI
+      cpu.step(); // CZ
 
       const state = cpu.status();
       assert.equal(state.pc, 0x0100, "Called to 0x0100 when Z flag set");
@@ -1114,8 +1125,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x00; // Target low
       mem[0x0004] = 0x02; // Target high = 0x0200
 
-      cpu.steps(5); // LBI
-      cpu.steps(15); // CNZ
+      cpu.step(); // LBI
+      cpu.step(); // CNZ
 
       assert.equal(cpu.status().pc, 0x0200, "Called to 0x0200 when Z flag clear");
     });
@@ -1131,9 +1142,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0005] = 0x00; // Target low
       mem[0x0006] = 0x03; // Target high = 0x0300
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI
-      cpu.steps(15); // CC
+      cpu.step(); // LBI
+      cpu.step(); // ADI
+      cpu.step(); // CC
 
       assert.equal(cpu.status().pc, 0x0300, "Called to 0x0300 when carry set");
     });
@@ -1150,9 +1161,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0006] = 0x04;
       mem[0x0007] = 0x00; // HLT
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI
-      cpu.steps(12); // CNC (should skip)
+      cpu.step(); // LBI
+      cpu.step(); // ADI
+      cpu.step(); // CNC (should skip)
 
       assert.equal(cpu.status().pc, 0x0007, "Did not call (carry was set)");
     });
@@ -1166,8 +1177,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x00;
       mem[0x0004] = 0x05; // Target = 0x0500
 
-      cpu.steps(5); // LBI
-      cpu.steps(15); // CP
+      cpu.step(); // LBI
+      cpu.step(); // CP
 
       assert.equal(cpu.status().pc, 0x0500, "Called when positive");
     });
@@ -1181,8 +1192,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x00;
       mem[0x0004] = 0x06; // Target = 0x0600
 
-      cpu.steps(5); // LBI
-      cpu.steps(15); // CM
+      cpu.step(); // LBI
+      cpu.step(); // CM
 
       assert.equal(cpu.status().pc, 0x0600, "Called when negative");
     });
@@ -1196,8 +1207,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x00;
       mem[0x0004] = 0x07; // Target = 0x0700
 
-      cpu.steps(5); // LBI
-      cpu.steps(15); // CPE
+      cpu.step(); // LBI
+      cpu.step(); // CPE
 
       assert.equal(cpu.status().pc, 0x0700, "Called when parity even");
     });
@@ -1211,8 +1222,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x00;
       mem[0x0004] = 0x08; // Target = 0x0800
 
-      cpu.steps(5); // LBI
-      cpu.steps(15); // CPO
+      cpu.step(); // LBI
+      cpu.step(); // CPO
 
       assert.equal(cpu.status().pc, 0x0800, "Called when parity odd");
     });
@@ -1226,8 +1237,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x42;
       mem[0x0002] = 0x02; // RLC
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RLC
+      cpu.step(); // LBI
+      cpu.step(); // RLC
 
       const state = cpu.status();
       // 01000010 rotated left = 10000100
@@ -1242,8 +1253,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x42;
       mem[0x0002] = 0x0A; // RRC
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RRC
+      cpu.step(); // LBI
+      cpu.step(); // RRC
 
       const state = cpu.status();
       // 01000010 rotated right = 00100001
@@ -1258,8 +1269,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x42;
       mem[0x0002] = 0x12; // RAL
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RAL
+      cpu.step(); // LBI
+      cpu.step(); // RAL
 
       const state = cpu.status();
       // 01000010 rotated left through carry (carry was 0) = 10000100
@@ -1274,8 +1285,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x42;
       mem[0x0002] = 0x1A; // RAR
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RAR
+      cpu.step(); // LBI
+      cpu.step(); // RAR
 
       const state = cpu.status();
       // 01000010 rotated right through carry (carry was 0) = 00100001
@@ -1290,8 +1301,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x81;
       mem[0x0002] = 0x02; // RLC
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RLC
+      cpu.step(); // LBI
+      cpu.step(); // RLC
 
       const state = cpu.status();
       // 10000001 rotated left = 00000011
@@ -1306,8 +1317,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x81;
       mem[0x0002] = 0x0A; // RRC
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // RRC
+      cpu.step(); // LBI
+      cpu.step(); // RRC
 
       const state = cpu.status();
       // 10000001 rotated right = 11000000
@@ -1324,9 +1335,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x01;
       mem[0x0004] = 0x12; // RAL
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI
-      cpu.steps(10); // RAL
+      cpu.step(); // LBI
+      cpu.step(); // ADI
+      cpu.step(); // RAL
 
       const state = cpu.status();
       // Result after ADI is 0x00, rotated left with carry=1 = 0x01
@@ -1342,9 +1353,9 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x01;
       mem[0x0004] = 0x1A; // RAR
 
-      cpu.steps(5); // LBI
-      cpu.steps(5); // ADI
-      cpu.steps(10); // RAR
+      cpu.step(); // LBI
+      cpu.step(); // ADI
+      cpu.step(); // RAR
 
       const state = cpu.status();
       // Result after ADI is 0x00, rotated right with carry=1 = 0x80
@@ -1360,8 +1371,8 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0x42;
       mem[0x0002] = 0x41; // OUT port 0
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // OUT
+      cpu.step(); // LBI
+      cpu.step(); // OUT
 
       assert.equal(ports[0], 0x42, "Port 0 received value 0x42");
     });
@@ -1376,10 +1387,10 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0004] = 0x55;
       mem[0x0005] = 0x51; // OUT port 2
 
-      cpu.steps(5); // LBI
-      cpu.steps(10); // OUT port 1
-      cpu.steps(5); // LBI
-      cpu.steps(10); // OUT port 2
+      cpu.step(); // LBI
+      cpu.step(); // OUT port 1
+      cpu.step(); // LBI
+      cpu.step(); // OUT port 2
 
       assert.equal(ports[1], 0xAA, "Port 1 received value 0xAA");
       assert.equal(ports[2], 0x55, "Port 2 received value 0x55");
