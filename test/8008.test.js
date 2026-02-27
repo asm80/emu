@@ -247,7 +247,7 @@ QUnit.module("8008 CPU Emulator", () => {
 
       cpu.set("A", 0x10);
       cpu.set("B", 0x20);
-      mem[0] = 0x80; // ADD B
+      mem[0] = 0x81; // ADD B
       cpu.step();
 
       const state = cpu.status();
@@ -502,7 +502,7 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[2] = 0x0E; // MVI B,$20
       mem[3] = 0x20;
       mem[4] = 0x81; // ADD B
-      mem[5] = 0x00; // HLT
+      mem[5] = 0xFF; // HLT
 
       cpu.step(); // MVI A,$10
       cpu.step(); // MVI B,$20
@@ -521,12 +521,12 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0] = 0x06; // MVI A,$00
       mem[1] = 0x00;
       mem[2] = 0x00; // LOOP: INR A
-      mem[3] = 0x34; // CPI $05
+      mem[3] = 0x3C; // CPI $05
       mem[4] = 0x05;
       mem[5] = 0x48; // JNZ LOOP
       mem[6] = 0x02;
       mem[7] = 0x00;
-      mem[8] = 0x00; // HLT
+      mem[8] = 0xFF; // HLT
 
       cpu.step(); // MVI A,$00
       for (let i = 0; i < 5; i++) {
@@ -582,7 +582,7 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0003] = 0x01;
       mem[0x0004] = 0x06; // LBI 0x10
       mem[0x0005] = 0x10;
-      mem[0x0006] = 0x14; // SBI 0x05 (subtract with borrow: 0x10 - 0x05 - carry(1) = 0x0A)
+      mem[0x0006] = 0x1C; // SBI 0x05 (subtract with borrow: 0x10 - 0x05 - carry(1) = 0x0A)
       mem[0x0007] = 0x05;
 
       cpu.step(); // LBI 0xFF
@@ -600,7 +600,7 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0xFF;
       mem[0x0002] = 0x04; // ADI 1 (sets carry)
       mem[0x0003] = 0x01;
-      mem[0x0004] = 0x3C; // XRI 0xAA
+      mem[0x0004] = 0x2C; // XRI 0xAA
       mem[0x0005] = 0xAA;
 
       cpu.step(); // LBI
@@ -619,7 +619,7 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0xFF;
       mem[0x0002] = 0x04; // ADI 1 (sets carry)
       mem[0x0003] = 0x01;
-      mem[0x0004] = 0x44; // ORI 0x55
+      mem[0x0004] = 0x34; // ORI 0x55
       mem[0x0005] = 0x55;
 
       cpu.step(); // LBI
@@ -638,7 +638,7 @@ QUnit.module("8008 CPU Emulator", () => {
       mem[0x0001] = 0xFF;
       mem[0x0002] = 0x04; // ADI 1 (sets carry)
       mem[0x0003] = 0x01;
-      mem[0x0004] = 0x34; // NDI 0x0F
+      mem[0x0004] = 0x24; // NDI 0x0F
       mem[0x0005] = 0x0F;
 
       cpu.step(); // LBI
@@ -804,7 +804,7 @@ QUnit.module("8008 CPU Emulator", () => {
 
       mem[0x0000] = 0x06; // LBI 1 (Z flag clear)
       mem[0x0001] = 0x01;
-      mem[0x0002] = 0x07; // RZ (should NOT return)
+      mem[0x0002] = 0x2B; // RTZ (should NOT return - Z flag was clear)
       mem[0x0003] = 0x00; // HLT
 
       cpu.set("SP", 0x0010);

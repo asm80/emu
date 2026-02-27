@@ -19,11 +19,10 @@ QUnit.module("Motorola 6809 CPU Emulator", () => {
     mem[0xFFFE] = 0x10;
     mem[0xFFFF] = 0x00;
 
-    const cpu = CPU6809();
-    cpu.init(
-      (addr, val) => { mem[addr] = val & 0xFF; },
-      (addr) => mem[addr] || 0
-    );
+    const cpu = CPU6809({
+      byteTo: (addr, val) => { mem[addr] = val & 0xFF; },
+      byteAt: (addr) => mem[addr] || 0,
+    });
 
     return { cpu, mem };
   };

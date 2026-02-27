@@ -59,8 +59,8 @@ const initDisasmTable = () => {
     disasmTable[opcode] = [`${immOps[op]} %1`, 2];
   }
 
-  // INR/DCR
-  for (let reg = 0; reg < 8; reg++) {
+  // INR/DCR (reg=0 would map to opcode 0x00 = HLT, skip it)
+  for (let reg = 1; reg < 8; reg++) {
     disasmTable[0x00 | (reg << 3)] = [`INR ${regs[reg]}`, 1];
     disasmTable[0x01 | (reg << 3)] = [`DCR ${regs[reg]}`, 1];
   }
@@ -238,12 +238,9 @@ export default (callbacks) => {
 
   // Stack operations (8-level hardware stack)
   const pop = () => {
-    if (stackDepth <= 0) {
-      return 0; // Stack underflow
-    }
     const value = getWord(regs.sp);
     regs.sp = (regs.sp + 2) & 0x3FFF;
-    stackDepth--;
+    if (stackDepth > 0) stackDepth--;
     return value & 0x3FFF;
   };
 
@@ -331,15 +328,19 @@ export default (callbacks) => {
     return x;
   };
 
-  // Conditional check for 8008 (fixed from legacy bug)
-  const condCheck = (dest) => {
-    const cond = dest & 3;
-    let condl = 0;
-    if (cond === 0) condl = (regs.f & CARRY) ? 1 : 0;
-    else if (cond === 1) condl = (regs.f & ZERO) ? 1 : 0;
-    else if (cond === 2) condl = (regs.f & SIGN) ? 1 : 0;
-    else condl = (regs.f & PARITY) ? 1 : 0;
-    return (dest >> 2) === condl ? 1 : 0;
+  // Conditional check for 8008: yyy selects condition code
+  // 0=NC 1=NZ 2=C 3=NC 4=P(S=0) 5=M(S=1) 6=PE(P=1) 7=PO(P=0)
+  const condCheck = (yyy) => {
+    switch (yyy & 7) {
+      case 0: return (regs.f & CARRY) ? 0 : 1;   // NC: no carry
+      case 1: return (regs.f & ZERO) ? 0 : 1;    // NZ: not zero
+      case 2: return (regs.f & CARRY) ? 1 : 0;   // C: carry set
+      case 3: return (regs.f & CARRY) ? 0 : 1;   // NC: no carry
+      case 4: return (regs.f & SIGN) ? 0 : 1;    // P: positive (sign clear)
+      case 5: return (regs.f & SIGN) ? 1 : 0;    // M: minus (sign set)
+      case 6: return (regs.f & PARITY) ? 1 : 0;  // PE: parity even
+      case 7: return (regs.f & PARITY) ? 0 : 1;  // PO: parity odd
+    }
   };
 
   // Register name lookup for 8008: 000=A,001=B,010=C,011=D,100=E,101=H,110=L,111=M(mem)
@@ -368,12 +369,7 @@ export default (callbacks) => {
 
     switch (top2) {
       case 0: // 00xxxxxx - Special instructions
-        if (i === 0x00 || i === 0xFF) {
-          // HLT - PC points back at HLT instruction (step() pre-incremented it)
-          regs.pc = (regs.pc - 1) & 0x3FFF;
-          regs.halted = 1;
-          regs.cycles += 4;
-        } else if ((i & 0xC7) === 0x02) {
+        if ((i & 0xC7) === 0x02) {
           // Rotate instructions
           switch (yyy) {
             case 0: // RLC
@@ -405,8 +401,12 @@ export default (callbacks) => {
               regs.cycles += 5;
               break;
           }
-        } else if ((i & 0x07) === 0x03) {
-          // Return instructions (including unconditional RET 0x07)
+        } else if (i === 0x07) {
+          // Unconditional RET
+          regs.pc = pop();
+          regs.cycles += 5;
+        } else if ((i & 0x07) === 0x07) {
+          // Conditional returns (zzz=7: 0x0F/0x17/0x1F/0x27/0x2F/0x37/0x3F)
           if (condCheck(yyy)) {
             regs.pc = pop();
             regs.cycles += 5;
@@ -433,9 +433,10 @@ export default (callbacks) => {
           regs.pc = yyy << 3;
           regs.cycles += 5;
         } else if ((i & 0xC7) === 0x06) {
-          // MVI (load immediate)
+          // MVI (load immediate) — sets SZP flags, preserves carry
           const imm = nextByte();
           setR(yyy, imm);
+          regs.f = flagTable[imm] | (regs.f & CARRY);
           regs.cycles += 8;
         } else if ((i & 0xC0) === 0x00) {
           // INR/DCR
@@ -500,7 +501,12 @@ export default (callbacks) => {
         break;
 
       case 3: // 11xxxxxx - MOV instructions
-        {
+        if (i === 0xFF) {
+          // HLT - PC points back at HLT instruction (step() pre-incremented it)
+          regs.pc = (regs.pc - 1) & 0x3FFF;
+          regs.halted = 1;
+          regs.cycles += 4;
+        } else {
           const dst = yyy, src = zzz;
           setR(dst, getR(src));
           regs.cycles += (src === 7 || dst === 7) ? 8 : 5;
@@ -606,7 +612,8 @@ export default (callbacks) => {
     f: regs.f,
     h: regs.h,
     l: regs.l,
-    stackDepth: stackDepth
+    stackDepth: stackDepth,
+    halted: regs.halted
   });
 
   /**
@@ -653,6 +660,13 @@ export default (callbacks) => {
     return f;
   };
 
+  /**
+   * Print debug info to console
+   */
+  const DEBUG = () => {
+    console.log(`PC:${toHexN(regs.pc, 4)} A:${toHex2(regs.a)} B:${toHex2(regs.b)} F:${flagsToString()}`);
+  };
+
   // Initialize and return API
   reset();
 
@@ -666,6 +680,7 @@ export default (callbacks) => {
     memr,
     status,
     set,
-    flagsToString
+    flagsToString,
+    DEBUG
   };
 };

@@ -768,7 +768,7 @@ QUnit.module("6502 CPU Emulator", () => {
 
       cpu.set("SP", 0xFD);
       mem[0x01FF] = 0x02; // Return to $0203
-      mem[0x01FE] = 0x03;
+      mem[0x01FE] = 0x02;
       mem[0x0300] = 0x60; // RTS
 
       cpu.set("PC", 0x0300);

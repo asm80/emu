@@ -2373,7 +2373,7 @@ EXTENDED 7
 IMMEDIAT_16 8
 */
 
-let disasm = function (i, a, b, c, d, pc) {
+export const disasm = function (i, a, b, c, d, pc) {
     const toHexN = function (n, d) {
       let s = n.toString(16);
       while (s.length < d) {
@@ -2805,15 +2805,17 @@ const flagsToString = () => {
   return f;
 };
 
-export default () => ({
-  init,
-  reset,
-  steps,
-  run,
-  status,
-  interrupt,
-  nmi,
-  set,
-  flagsToString,
-  disasm,
-});
+export default (callbacks) => {
+  init(callbacks.byteTo, callbacks.byteAt, callbacks.ticks ?? null);
+  return {
+    reset,
+    steps,
+    run,
+    status,
+    interrupt,
+    nmi,
+    set,
+    flagsToString,
+    disasm,
+  };
+};

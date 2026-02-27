@@ -957,7 +957,7 @@ export default (callbacks) => {
    */
   const reset = () => {
     pc = wordAt(RESET_VECTOR);
-    sp = 255;
+    sp = 0xFD;
     a = x = y = 0;
     flags = 32;
     breakFlag = false;
@@ -1052,6 +1052,7 @@ export default (callbacks) => {
       case "X": x = value; return;
       case "Y": y = value; return;
       case "SP": sp = value; return;
+      case "FLAGS": flags = value; return;
     }
   };
 
@@ -1061,7 +1062,7 @@ export default (callbacks) => {
    */
   const flagsToString = () => {
     let f = "";
-    const fx = "NV1BDIZC";
+    const fx = "NV-BDIZC";
     for (let i = 0; i < 8; i++) {
       const n = flags & (0x80 >> i);
       if (n === 0) {

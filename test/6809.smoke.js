@@ -15,10 +15,15 @@ import CPU6809 from "../src/6809.js";
 
 QUnit.module("MC6809 Smoke Tests");
 
+const makeCPU = (mem) => CPU6809({
+  byteTo: (addr, val) => { mem[addr] = val; },
+  byteAt: (addr) => mem[addr],
+});
+
 QUnit.test("Module loads and initializes", (assert) => {
-  const cpu = CPU6809();
+  const mem = new Uint8Array(0x10000);
+  const cpu = makeCPU(mem);
   assert.ok(cpu, "CPU factory returns object");
-  assert.ok(cpu.init, "init method exists");
   assert.ok(cpu.reset, "reset method exists");
   assert.ok(cpu.steps, "steps method exists");
   assert.ok(cpu.status, "status method exists");
@@ -34,11 +39,7 @@ QUnit.test("Reset initializes CPU properly", (assert) => {
   mem[0xfffe] = 0x80; // Reset vector high byte
   mem[0xffff] = 0x00; // Reset vector low byte
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   const state = cpu.status();
   assert.equal(state.pc, 0x8000, "PC loaded from reset vector");
@@ -53,11 +54,7 @@ QUnit.test("Basic LDA immediate", (assert) => {
   mem[0x1000] = 0x86; // LDA immediate
   mem[0x1001] = 0x42; // Value $42
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(2); // Execute LDA
 
@@ -76,11 +73,7 @@ QUnit.test("ADD operation sets flags correctly", (assert) => {
   mem[0x1002] = 0x8b; // ADDA immediate
   mem[0x1003] = 0x80; // Add $80
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(4); // Execute LDA + ADDA
 
@@ -102,11 +95,7 @@ QUnit.test("TFR instruction works correctly (16-bit to 16-bit)", (assert) => {
   mem[0x1003] = 0x1f; // TFR X,Y
   mem[0x1004] = 0x12; // X=1, Y=2
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(7); // Execute LDX + TFR
 
@@ -125,11 +114,7 @@ QUnit.test("TFR 8-bit to 8-bit works", (assert) => {
   mem[0x1002] = 0x1f; // TFR A,B
   mem[0x1003] = 0x89; // A=8, B=9
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(4); // Execute LDA + TFR
 
@@ -151,11 +136,7 @@ QUnit.test("TFR mixed sizes is no-op (FIXED BUG)", (assert) => {
   mem[0x1005] = 0x1f; // TFR X,A (16-bit to 8-bit - INVALID!)
   mem[0x1006] = 0x18; // X=1, A=8
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(7); // Execute LDX + LDA + TFR
 
@@ -179,11 +160,7 @@ QUnit.test("EXG exchanges registers", (assert) => {
   mem[0x1007] = 0x1e; // EXG X,Y
   mem[0x1008] = 0x12; // X=1, Y=2
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(10); // Execute LDX + LDY + EXG
 
@@ -206,11 +183,7 @@ QUnit.test("System stack (S) operations", (assert) => {
   mem[0x1006] = 0x34; // PSHS A
   mem[0x1007] = 0x02; // Push A register
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(12); // Execute LDS + LDA + PSHS
 
@@ -232,11 +205,7 @@ QUnit.test("User stack (U) operations", (assert) => {
   mem[0x1005] = 0x36; // PSHU A
   mem[0x1006] = 0x02; // Push A to U stack
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(11); // Execute LDU + LDA + PSHU
 
@@ -260,11 +229,7 @@ QUnit.test("Direct page register (DP) affects addressing", (assert) => {
 
   mem[0x2050] = 0xCD; // Data at $2050
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(12); // Execute LDA immediate (2) + TFR (6) + LDA direct (4)
 
@@ -287,11 +252,7 @@ QUnit.test("Interrupt handling (IRQ)", (assert) => {
   mem[0x1004] = 0x1c; // ANDCC immediate
   mem[0x1005] = 0xEF; // Clear I flag (enable interrupts)
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(10); // Execute LDS + ANDCC
 
@@ -320,11 +281,7 @@ QUnit.test("NMI handling (Non-Maskable Interrupt)", (assert) => {
   mem[0x1002] = 0x20; // S = $2000
   mem[0x1003] = 0x00;
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.steps(5); // Execute LDS
   cpu.nmi(); // Trigger NMI
@@ -341,11 +298,7 @@ QUnit.test("Flags to string conversion", (assert) => {
   mem[0xfffe] = 0x10;
   mem[0xffff] = 0x00;
 
-  const cpu = CPU6809();
-  cpu.init(
-    (addr, val) => (mem[addr] = val),
-    (addr) => mem[addr]
-  );
+  const cpu = makeCPU(mem);
 
   cpu.set("FLAGS", 0xFF); // All flags set
   assert.equal(cpu.flagsToString(), "EFHINZVC", "All flags uppercase when set");
