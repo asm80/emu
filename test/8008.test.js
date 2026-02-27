@@ -460,15 +460,15 @@ QUnit.module("8008 CPU Emulator", () => {
 
   QUnit.module("Disassembler", () => {
     QUnit.test("Disassemble HLT", (assert) => {
-      const [mnemonic, length] = disasm(0x00, 0, 0);
+      const [mnemonic, length] = disasm(0x05, 0, 0);
       assert.equal(mnemonic, "HLT", "HLT disassembles correctly");
       assert.equal(length, 1, "HLT is 1 byte");
     });
 
-    QUnit.test("Disassemble MVI A,n", (assert) => {
+    QUnit.test("Disassemble LBI n (8008 native: load B immediate)", (assert) => {
       const [mnemonic, length] = disasm(0x06, 0x42, 0);
-      assert.equal(mnemonic, "MVI A,$42", "MVI disassembles correctly");
-      assert.equal(length, 2, "MVI is 2 bytes");
+      assert.equal(mnemonic, "LBI $42", "LBI disassembles correctly");
+      assert.equal(length, 2, "LBI is 2 bytes");
     });
 
     QUnit.test("Disassemble JMP nn", (assert) => {
@@ -1442,10 +1442,10 @@ QUnit.module("8008 CPU Emulator", () => {
       assert.deepEqual(disasm(0x0C, 0x20, 0), ["ACI $20", 2], "ACI");
       assert.deepEqual(disasm(0x14, 0x30, 0), ["SUI $30", 2], "SUI");
       assert.deepEqual(disasm(0x1C, 0x40, 0), ["SBI $40", 2], "SBI");
-      assert.deepEqual(disasm(0x34, 0x50, 0), ["NDI $50", 2], "NDI (AND immediate)");
-      assert.deepEqual(disasm(0x3C, 0x60, 0), ["XRI $60", 2], "XRI");
-      assert.deepEqual(disasm(0x44, 0x70, 0), ["ORI $70", 2], "ORI");
-      assert.deepEqual(disasm(0x4C, 0x80, 0), ["CPI $80", 2], "CPI");
+      assert.deepEqual(disasm(0x24, 0x50, 0), ["NDI $50", 2], "NDI (AND immediate)");
+      assert.deepEqual(disasm(0x2C, 0x60, 0), ["XRI $60", 2], "XRI");
+      assert.deepEqual(disasm(0x34, 0x70, 0), ["ORI $70", 2], "ORI");
+      assert.deepEqual(disasm(0x3C, 0x80, 0), ["CPI $80", 2], "CPI");
     });
 
     QUnit.test("Jump and call instructions", (assert) => {
@@ -1523,7 +1523,7 @@ QUnit.module("8008 CPU Emulator", () => {
       assert.deepEqual(disasm(0xC0, 0, 0), ["LAA", 1], "LAA - Load A from A");
       assert.deepEqual(disasm(0xC1, 0, 0), ["LAB", 1], "LAB - Load A from B");
       assert.deepEqual(disasm(0xC7, 0, 0), ["LAM", 1], "LAM - Load A from memory");
-      assert.deepEqual(disasm(0xF8, 0, 0), ["LLA", 1], "LLA - Load L from A");
+      assert.deepEqual(disasm(0xF0, 0, 0), ["LLA", 1], "LLA - Load L from A");
     });
   });
 });

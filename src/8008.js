@@ -23,27 +23,26 @@ const disasmTable = Array(256).fill(["???", 1]);
 
 // Initialize disassembly table for 8008 instructions
 const initDisasmTable = () => {
-  // HLT
-  disasmTable[0x00] = ["HLT", 1];
+  // HLT (0xFF = halt, 0x05 = halt in 8008 convention)
   disasmTable[0xFF] = ["HLT", 1];
 
-  // MOV instructions (register to register)
+  // MOV instructions (8008 native Lxy format: Load dst-register from src-register)
   const regs = ["A", "B", "C", "D", "E", "H", "L", "M"];
-  for (let dst = 0; dst < 8; dst++) {
+  for (let dst = 0; dst < 7; dst++) { // dst=0..6 (A-L); dst=7 (M) not valid as destination
     for (let src = 0; src < 8; src++) {
-      if (dst === 7) continue; // Skip MOV M,M (invalid)
       const opcode = 0xC0 | (dst << 3) | src;
-      disasmTable[opcode] = [`MOV ${regs[dst]},${regs[src]}`, 1];
+      disasmTable[opcode] = [`L${regs[dst]}${regs[src]}`, 1];
     }
   }
 
-  // MVI (immediate load)
+  // LXI (immediate load) — 8008 native names: LBI, LCI, LDI, LEI, LHI, LLI, LAI
+  const lxiRegs = ["B", "C", "D", "E", "M", "H", "L", "A"];
   for (let dst = 0; dst < 8; dst++) {
     const opcode = 0x06 | (dst << 3);
-    disasmTable[opcode] = [`MVI ${regs[dst]},%1`, 2];
+    disasmTable[opcode] = [`L${lxiRegs[dst]}I %1`, 2];
   }
 
-  // Arithmetic and logical operations
+  // Arithmetic and logical operations (register)
   const aluOps = ["ADD", "ADC", "SUB", "SBB", "ANA", "XRA", "ORA", "CMP"];
   for (let op = 0; op < 8; op++) {
     for (let reg = 0; reg < 8; reg++) {
@@ -52,17 +51,17 @@ const initDisasmTable = () => {
     }
   }
 
-  // Immediate arithmetic
-  const immOps = ["ADI", "ACI", "SUI", "SBI", "ANI", "XRI", "ORI", "CPI"];
+  // Immediate arithmetic (8008 native: NDI instead of ANI)
+  const immOps = ["ADI", "ACI", "SUI", "SBI", "NDI", "XRI", "ORI", "CPI"];
   for (let op = 0; op < 8; op++) {
     const opcode = 0x04 | (op << 3);
     disasmTable[opcode] = [`${immOps[op]} %1`, 2];
   }
 
-  // INR/DCR (reg=0 would map to opcode 0x00 = HLT, skip it)
-  for (let reg = 1; reg < 8; reg++) {
-    disasmTable[0x00 | (reg << 3)] = [`INR ${regs[reg]}`, 1];
-    disasmTable[0x01 | (reg << 3)] = [`DCR ${regs[reg]}`, 1];
+  // INR/DCR — 8008 native format: INA/INB/... and DCA/DCB/...
+  for (let reg = 0; reg < 8; reg++) {
+    disasmTable[0x00 | (reg << 3)] = [`IN${regs[reg]}`, 1];
+    disasmTable[0x01 | (reg << 3)] = [`DC${regs[reg]}`, 1];
   }
 
   // Rotate instructions
@@ -71,25 +70,18 @@ const initDisasmTable = () => {
   disasmTable[0x12] = ["RAL", 1];
   disasmTable[0x1A] = ["RAR", 1];
 
-  // Jump instructions
-  const conditions = ["JNC", "JNZ", "JP", "JPO", "JC", "JZ", "JM", "JPE"];
+  // Jump, Call, Return using 8008 condition names (FZ/TZ/FC/TC/FP/TP/PE/PO)
+  const conditions = ["JFZ", "JTZ", "JFC", "JTC", "JFP", "JTP", "JPE", "JPO"];
   for (let cond = 0; cond < 8; cond++) {
     disasmTable[0x40 | (cond << 3)] = [`${conditions[cond]} #1`, 3];
+    disasmTable[0x42 | (cond << 3)] = [`C${conditions[cond].substring(1)} #1`, 3];
+    disasmTable[0x07 | (cond << 3)] = [`R${conditions[cond].substring(1)}`, 1];
   }
   disasmTable[0x44] = ["JMP #1", 3];
+  disasmTable[0x46] = ["CAL #1", 3];
 
-  // Call/Return instructions
-  for (let cond = 0; cond < 8; cond++) {
-    disasmTable[0x42 | (cond << 3)] = [`C${conditions[cond].substring(1)} #1`, 3];
-    disasmTable[0x03 | (cond << 3)] = [`R${conditions[cond].substring(1)}`, 1];
-  }
-  disasmTable[0x46] = ["CALL #1", 3];
-  disasmTable[0x07] = ["RET", 1];
-
-  // RST instructions
-  for (let vec = 0; vec < 8; vec++) {
-    disasmTable[0x05 | (vec << 3)] = [`RST ${vec}`, 1];
-  }
+  // HLT at 0x05 (8008 convention)
+  disasmTable[0x05] = ["HLT", 1];
 
   // I/O instructions
   for (let port = 0; port < 8; port++) {
