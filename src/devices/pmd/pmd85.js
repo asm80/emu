@@ -74,7 +74,9 @@ export const createPMD = (options = {}) => {
    * Pre-allocated audio output buffer, reused every frame.
    * Sized for 30 fps minimum (largest possible frame).
    */
-  const audioBuffer = new Float32Array(Math.ceil(sampleRate / 30) + 2);
+  // Sized for 10 fps worst-case headroom — ScriptProcessor at 48 kHz with
+  // a 2048-sample buffer runs at ~23 fps, so this safely covers any host.
+  const audioBuffer = new Float32Array(Math.ceil(sampleRate / 10) + 2);
 
   /**
    * Square wave counter for the ~4 kHz tone (period = 12 samples at 48 kHz).
@@ -143,13 +145,15 @@ export const createPMD = (options = {}) => {
 
   /**
    * Write a byte to the address space.
-   * Writes to 0x8000–0x8FFF are silently ignored (ROM write protection).
+   * Writes to 0x8000–0xBFFF are silently ignored — the ROM monitor occupies
+   * 4 KB at 0x8000–0x8FFF and mirrors three times to fill 0x8000–0xBFFF
+   * (hardware address lines A12/A13 of the ROM chip are unconnected).
    *
    * @param {number} addr - 16-bit address
    * @param {number} val  - Byte value (0–255)
    */
   const byteTo = (addr, val) => {
-    if (addr >= 0x8000 && addr < 0x9000) return;
+    if (addr >= 0x8000 && addr < 0xC000) return;
     ram[addr] = val & 0xFF;
   };
 
@@ -278,7 +282,7 @@ export const createPMD = (options = {}) => {
      * Reset the emulator to power-on state.
      *
      * - Clears all RAM
-     * - Loads ROM monitor into 0x8000–0x8FFF
+     * - Loads ROM monitor into 0x8000–0xBFFF (4× mirrored, matching hardware)
      * - Resets CPU: PC=0x8000, SP=0x7FFF, all registers 0
      * - Clears port registers, audio state, and LED state
      * - Does NOT clear tape buffers (tape persists across resets, matching hardware)
@@ -286,7 +290,12 @@ export const createPMD = (options = {}) => {
     reset() {
       ram.fill(0);
       const rom = customRom ?? MONITOR_ROM;
-      ram.set(rom.subarray(0, 4096), 0x8000);
+      // Mirror the 4 KB ROM across all four 4 KB slots in 0x8000–0xBFFF,
+      // matching PMD-85 hardware where A12/A13 of the ROM chip are unconnected.
+      const romSlice = rom.subarray(0, 4096);
+      for (let mirror = 0; mirror < 4; mirror++) {
+        ram.set(romSlice, 0x8000 + mirror * 0x1000);
+      }
       cpu.reset();
       cpu.set("PC", 0x8000);
       cpu.set("SP", 0x7FFF);

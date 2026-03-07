@@ -146,6 +146,7 @@
   <button id="btn-tape-stop">⏹ Stop</button>
   <button id="btn-save-tape">💾 Save</button>
   <div id="tape-info">No tape loaded</div>
+  <div id="tape-label" style="color:#777;font-size:0.8rem;width:100%;text-align:center;display:none"></div>
 </div>
 
 <div id="debug-section" id="debug">PC: — &nbsp; T: —</div>
@@ -309,7 +310,9 @@
     const bufSize = 2048;
     const tStatesPerBuf = Math.floor(FCPU / audioCtx.sampleRate * bufSize);
 
-    // ScriptProcessorNode drives the emulation loop, synchronized to audio clock
+    // ScriptProcessorNode drives CPU emulation + audio, synchronized to audio clock.
+    // Canvas rendering is intentionally NOT done here — it runs in the rAF loop
+    // below to avoid blocking the audio callback with expensive pixel operations.
     scriptNode = audioCtx.createScriptProcessor(bufSize, 0, 1);
     scriptNode.onaudioprocess = (e) => {
       keyMatrix = buildKeyMatrix();
@@ -322,14 +325,20 @@
       const len = Math.min(src.length, out.length);
       for (let i = 0; i < len; i++) out[i] = src[i];
 
-      // Update LEDs
+      // LED state update is lightweight — fine to do here
       updateLeds(result.leds);
-
-      // Render display (happens at audio rate — typically ~23 fps at 2048 buf / 48kHz)
-      renderDisplay(pmd.getRAM());
     };
 
     scriptNode.connect(audioCtx.destination);
+
+    // Separate rAF loop for display rendering — keeps expensive pixel work off
+    // the audio thread, preventing audio dropouts caused by canvas stalls.
+    const rafLoop = () => {
+      if (!running) return;
+      if (pmd) renderDisplay(pmd.getRAM());
+      requestAnimationFrame(rafLoop);
+    };
+    requestAnimationFrame(rafLoop);
   };
 
   // ── User interaction ───────────────────────────────────────────────────────
@@ -339,18 +348,21 @@
     if (pmd) pmd.reset();
   });
 
-  // Keyboard
+  // Keyboard — capture phase ensures we intercept before browser shortcuts.
+  // F1–F12 (112–123) are PMD-85 keys K0–K11; we must preventDefault() on all
+  // of them. Alt/Meta combos are left to the browser (window management, DevTools).
+  // { capture: true } runs this handler before the browser's own F-key handlers.
   window.addEventListener("keydown", (e) => {
-    // Ctrl = STOP key
+    if (e.altKey || e.metaKey) return;   // let Alt/Meta combos through
+    // Ctrl = STOP key (ESC keyCode 27)
     const code = e.ctrlKey ? 27 : e.keyCode;
     keymap.set(code, true);
-    // Prevent browser defaults for most emulator keys
-    if (code !== 116 && !(e.altKey || e.metaKey)) e.preventDefault();
-  });
+    e.preventDefault();
+  }, { capture: true });
   window.addEventListener("keyup", (e) => {
     const code = e.ctrlKey ? 27 : e.keyCode;
     keymap.delete(code);
-  });
+  }, { capture: true });
 
   // ── Tape transport UI ───────────────────────────────────────────────────────
 
@@ -361,6 +373,9 @@
   const btnStop       = document.getElementById("btn-tape-stop");
   let   tapeFileName  = null;
   let   tapeDataLen   = 0;
+  let   tapePmdLabel  = null;   // first field of .pmd file (name/comment), if present
+
+  const tapeLabelEl = document.getElementById("tape-label");
 
   const updateTapeUI = () => {
     if (!pmd) return;
@@ -380,35 +395,62 @@
     } else {
       tapeInfoEl.textContent = "No tape loaded";
     }
+    // Show PMD label (name/comment from first field of .pmd file)
+    if (tapePmdLabel) {
+      tapeLabelEl.textContent = tapePmdLabel;
+      tapeLabelEl.style.display = "";
+    } else {
+      tapeLabelEl.style.display = "none";
+    }
   };
 
   // Update tape status a few times per second (driven by a simple interval)
   setInterval(() => { if (running) updateTapeUI(); }, 500);
 
   /**
-   * Parse tape file bytes into a Uint8Array of tape data.
+   * Parse tape file text into a JS value.
+   *
+   * Handles two variants:
+   *   - Standard JSON (decimal numbers)
+   *   - JS-flavoured JSON with hex literals like 0xff (used by older PMD tools)
+   *
+   * @param {string} text - Raw text content of the file
+   * @returns {*} Parsed value, or null on failure
+   */
+  const parseTapeText = (text) => {
+    // First try standard JSON
+    try { return JSON.parse(text); } catch { /* fall through */ }
+    // Replace hex literals (0x1A, 0xFF …) with their decimal equivalents, then retry
+    try {
+      const normalized = text.replace(/0x([0-9a-fA-F]+)/gi, (_, h) => parseInt(h, 16));
+      return JSON.parse(normalized);
+    } catch { return null; }
+  };
+
+  /**
+   * Parse tape file bytes into { data: Uint8Array, label: string|null }.
    *
    * Supported formats:
-   *   .pmd      — JSON: [header_string, [byte, byte, ...]]
+   *   .pmd      — JSON/JS: [header_string, [byte, byte, ...]]  (decimal or hex literals)
    *   .pmdtape  — JSON: [byte, byte, ...]  (flat array, saved by this demo)
    *   .bin      — raw binary bytes
    */
   const parseTapeFile = (rawBytes, fileName) => {
     if (fileName.endsWith(".pmd") || fileName.endsWith(".pmdtape")) {
-      try {
-        const parsed = JSON.parse(new TextDecoder().decode(rawBytes));
+      const parsed = parseTapeText(new TextDecoder().decode(rawBytes));
+      if (parsed !== null) {
         // .pmd format: [name_string, [bytes]]
         if (Array.isArray(parsed) && parsed.length === 2 &&
             typeof parsed[0] === "string" && Array.isArray(parsed[1])) {
-          return new Uint8Array(parsed[1]);
+          return { data: new Uint8Array(parsed[1]), label: parsed[0] };
         }
         // .pmdtape format: flat [bytes]
         if (Array.isArray(parsed)) {
-          return new Uint8Array(parsed);
+          return { data: new Uint8Array(parsed), label: null };
         }
-      } catch { /* fall through to raw bytes */ }
+      }
     }
-    return rawBytes;  // .bin or unrecognised — treat as raw
+    return { data: rawBytes, label: null };  // .bin or unrecognised — raw bytes
   };
 
   // Tape load
@@ -417,14 +459,15 @@
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const raw  = new Uint8Array(ev.target.result);
-      const data = parseTapeFile(raw, file.name);
+      const raw              = new Uint8Array(ev.target.result);
+      const { data, label }  = parseTapeFile(raw, file.name);
       if (pmd) {
         pmd.tape.stop();
         pmd.tape.setReadBuffer(data);
       }
-      tapeFileName = file.name;
-      tapeDataLen  = data.length;
+      tapeFileName  = file.name;
+      tapeDataLen   = data.length;
+      tapePmdLabel  = label;
       updateTapeUI();
     };
     reader.readAsArrayBuffer(file);
