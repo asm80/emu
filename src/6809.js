@@ -2810,6 +2810,7 @@ export default (callbacks) => {
   return {
     reset,
     steps,
+    singleStep: () => step(),
     run,
     status,
     interrupt,

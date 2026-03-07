@@ -863,6 +863,7 @@ export default (callbacks) => {
     init,
     reset,
     steps,
+    singleStep: () => step(),
     trace,
     T,
     memr,

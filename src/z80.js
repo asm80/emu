@@ -2830,6 +2830,7 @@ export default (callbacks) => {
     reset,
     steps,
     step,
+    singleStep: () => { const before = tstates; step(); return tstates - before; },
     status,
     set,
     interrupt,

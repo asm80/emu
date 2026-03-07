@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PMD-85 Emulator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1a1a1a;
+      color: #ccc;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      gap: 16px;
+      min-height: 100vh;
+    }
+
+    h1 { font-size: 1.2rem; color: #aaa; letter-spacing: 2px; }
+
+    #screen-wrap {
+      position: relative;
+      border: 3px solid #444;
+      background: #000;
+      line-height: 0;
+    }
+
+    canvas {
+      display: block;
+      /* Physical size — matches 288×256 doubled to 576×512 */
+      width: 576px;
+      height: 512px;
+      image-rendering: pixelated;
+    }
+
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.7);
+      font-size: 1.1rem;
+      color: #888;
+      cursor: pointer;
+    }
+
+    #controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    button {
+      background: #333;
+      color: #ccc;
+      border: 1px solid #555;
+      padding: 6px 14px;
+      cursor: pointer;
+      font-family: monospace;
+      font-size: 0.9rem;
+      border-radius: 3px;
+    }
+    button:hover { background: #444; }
+    button:active { background: #222; }
+
+    #leds {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .led {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: 1px solid #333;
+      background: #111;
+      transition: background 0.05s;
+    }
+    .led.r.on { background: #e33; box-shadow: 0 0 5px #e33; }
+    .led.y.on { background: #ee3; box-shadow: 0 0 5px #ee3; }
+    .led.g.on { background: #3e3; box-shadow: 0 0 5px #3e3; }
+
+    #tape-section {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+      font-size: 0.85rem;
+    }
+    #tape-info { color: #888; min-width: 180px; text-align: center; }
+
+    button.tape-active { background: #553; border-color: #aa8; color: #ee8; }
+    button#btn-tape-rec.tape-active { background: #522; border-color: #a44; color: #f88; }
+
+    label[for="tape-load"] {
+      background: #333;
+      color: #ccc;
+      border: 1px solid #555;
+      padding: 6px 14px;
+      cursor: pointer;
+      font-family: monospace;
+      font-size: 0.9rem;
+      border-radius: 3px;
+    }
+    label[for="tape-load"]:hover { background: #444; }
+    #tape-load { display: none; }
+
+    #debug-section {
+      font-size: 0.8rem;
+      color: #666;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<h1>PMD-85</h1>
+
+<div id="screen-wrap">
+  <canvas id="pmd" width="576" height="512"></canvas>
+  <div id="overlay">Click to start</div>
+</div>
+
+<div id="controls">
+  <button id="btn-reset">Reset</button>
+  <div id="leds">
+    <span style="font-size:0.75rem;color:#666">LED</span>
+    <div class="led r" id="led-r" title="Red"></div>
+    <div class="led y" id="led-y" title="Yellow"></div>
+    <div class="led g" id="led-g" title="Green"></div>
+  </div>
+</div>
+
+<div id="tape-section">
+  <label for="tape-load">📼 Load</label>
+  <input type="file" id="tape-load" accept=".pmd,.pmdtape,.bin">
+  <button id="btn-tape-rewind">⏮ Rewind</button>
+  <button id="btn-tape-play">▶ Play</button>
+  <button id="btn-tape-rec">⏺ Record</button>
+  <button id="btn-tape-stop">⏹ Stop</button>
+  <button id="btn-save-tape">💾 Save</button>
+  <div id="tape-info">No tape loaded</div>
+</div>
+
+<div id="debug-section" id="debug">PC: — &nbsp; T: —</div>
+
+<script type="module">
+  import { createPMD } from "../src/devices/pmd/pmd85.js";
+
+  // ── Constants ──────────────────────────────────────────────────────────────
+
+  const FCPU = 2000000;   // 2 MHz PMD-85 CPU
+
+  // ── Canvas & display ───────────────────────────────────────────────────────
+
+  const canvas  = document.getElementById("pmd");
+  const ctx2d   = canvas.getContext("2d");
+  const imgData = ctx2d.createImageData(576, 512);
+  const pixels  = new Uint32Array(imgData.data.buffer);
+
+  let blinkCounter = 0;   // 0–99, host decides blink threshold
+
+  /**
+   * Render VRAM (0xC000–0xFFFF) to the canvas ImageData.
+   *
+   * Each VRAM byte encodes 6 horizontal pixels:
+   *   bits 0–5: pixel data (bit 0 = leftmost)
+   *   bit 6: brightness (1=255, 0=192)
+   *   bit 7: blink (blanked when blinkCounter > 50)
+   *
+   * Output is 576×512 px (2× scale: each hardware pixel → 2×2 canvas pixels).
+   */
+  const renderDisplay = (ram) => {
+    const blink = blinkCounter > 50;
+    blinkCounter = (blinkCounter + 1) % 100;
+
+    for (let addr = 0xC000; addr < 0x10000; addr++) {
+      const disp = addr - 0xC000;
+      const line = disp >> 6;               // hardware row (0–255)
+      const pos  = disp & 0x3F;             // byte within row (0–63)
+      if (pos > 47) continue;               // only 48 bytes/row are visible
+
+      let nbyte  = ram[addr];
+      const bright  = (nbyte & 0x40) ? 255 : 192;
+      const doBlink = (nbyte & 0x80) !== 0;
+      const lit     = doBlink && blink ? 0 : bright;
+      const fg  = (0xFF000000 | (lit << 16) | (lit << 8) | lit) >>> 0;
+      const bg  = 0xFF000000 >>> 0;
+
+      // Each hardware pixel → 2 px wide, each row → 2 rows tall (2× scale)
+      const rowBase = line * 2 * 576 + pos * 6 * 2;
+
+      for (let bit = 0; bit < 6; bit++) {
+        const on   = (nbyte & 1) !== 0;
+        const col  = (pos * 6 + bit) * 2;
+        const p0   = line * 2 * 576 + col;
+        const p1   = p0 + 576;             // next canvas row (doubled)
+        pixels[p0]     = on ? fg : bg;
+        pixels[p0 + 1] = on ? fg : bg;
+        pixels[p1]     = on ? fg : bg;
+        pixels[p1 + 1] = on ? fg : bg;
+        nbyte >>= 1;
+      }
+    }
+
+    ctx2d.putImageData(imgData, 0, 0);
+  };
+
+  // ── Keyboard mapping ───────────────────────────────────────────────────────
+  //
+  // PMD-85 keyboard matrix: 16 columns × 5 rows.
+  // KEYS[column][row] = JS keyCode (or array of alternative keyCodes).
+  // Ported from old/devices/emuPMD.js.
+
+  const KEYS = {
+    0:  [112, [97, 49],  81, 65, 32],      // F1, 1/a, Q, A, Space
+    1:  [113, [98, 50],  87, 83, 89],      // F2, 2/b, W, S, Y
+    2:  [114, [99, 51],  69, 68, 88],      // F3, 3/c, E, D, X
+    3:  [115, [100, 52], 82, 70, 67],      // F4, 4/d, R, F, C
+    4:  [116, [101, 53], 84, 71, 86],      // F5, 5/e, T, G, V
+    5:  [117, [102, 54], 90, 72, 66],      // F6, 6/f, Z, H, B
+    6:  [118, [103, 55], 85, 74, 78],      // F7, 7/g, U, J, N
+    7:  [119, [104, 56], 73, 75, 77],      // F8, 8/h, I, K, M
+    8:  [120, [105, 57], 79, 76, 188],     // F9, 9/i, O, L, comma
+    9:  [121, [96, 48],  80, 222, 190],    // F10, 0/`, P, ", period
+    10: [122, 189, 219, 186, 191],         // F11, minus, [, ;, /
+    11: [123, 220, 221, 187, 0],           // F12, \, ], =
+    12: [192, 45, [37, 8], 38, 0],         // `, Insert, Left/Backspace, Up
+    13: [9,   46, 36, 35, 0],              // Tab, Delete, Home, End
+    14: [33,  34, 39, 40, 13],             // PgUp, PgDn, Right, Down, Enter
+    15: [27,  0,  0,  0,  0],             // Esc (STOP)
+  };
+
+  /** Currently pressed keys: Map<keyCode, true> */
+  const keymap = new Map();
+
+  /** Build a 16-byte key matrix from the current keymap state. */
+  const buildKeyMatrix = () => {
+    const matrix = new Uint8Array(16);
+    for (let col = 0; col < 16; col++) {
+      let bits = 0;
+      for (let row = 0; row < 5; row++) {
+        const code = KEYS[col][row];
+        const pressed = Array.isArray(code)
+          ? code.some(k => keymap.has(k))
+          : keymap.has(code);
+        if (pressed) bits |= (1 << row);
+      }
+      // Shift (keyCode 16) adds to every column as a modifier
+      if (keymap.has(16)) bits |= 0x20;
+      matrix[col] = bits;
+    }
+    return matrix;
+  };
+
+  // ── PMD-85 emulator instance ───────────────────────────────────────────────
+
+  let pmd = null;   // created after AudioContext is available
+
+  // ── LED helpers ────────────────────────────────────────────────────────────
+
+  const ledR = document.getElementById("led-r");
+  const ledY = document.getElementById("led-y");
+  const ledG = document.getElementById("led-g");
+
+  const updateLeds = (leds) => {
+    ledR.classList.toggle("on", leds.r);
+    ledY.classList.toggle("on", leds.y);
+    ledG.classList.toggle("on", leds.g);
+  };
+
+  // ── Debug info ─────────────────────────────────────────────────────────────
+
+  const debugEl = document.getElementById("debug-section");
+  let frameCount = 0;
+  const updateDebug = () => {
+    if (!pmd || (++frameCount % 30) !== 0) return;
+    const s = pmd.getCpuStatus();
+    debugEl.textContent = `PC: ${s.pc.toString(16).padStart(4,"0").toUpperCase()}  T: ${pmd.getCpuStatus ? "" : ""}`;
+  };
+
+  // ── Audio + main loop ──────────────────────────────────────────────────────
+
+  let audioCtx = null;
+  let scriptNode = null;
+  let running = false;
+  let keyMatrix = new Uint8Array(16);
+
+  /**
+   * Start the emulator. Called on first user interaction (required by browser
+   * autoplay policy for AudioContext creation).
+   */
+  const start = () => {
+    if (running) return;
+    running = true;
+    document.getElementById("overlay").style.display = "none";
+    document.getElementById("btn-reset").disabled = false;
+
+    audioCtx = new AudioContext();
+    pmd = createPMD({ sampleRate: audioCtx.sampleRate });
+    pmd.reset();
+
+    const bufSize = 2048;
+    const tStatesPerBuf = Math.floor(FCPU / audioCtx.sampleRate * bufSize);
+
+    // ScriptProcessorNode drives the emulation loop, synchronized to audio clock
+    scriptNode = audioCtx.createScriptProcessor(bufSize, 0, 1);
+    scriptNode.onaudioprocess = (e) => {
+      keyMatrix = buildKeyMatrix();
+      const result = pmd.frame(tStatesPerBuf, keyMatrix);
+      if (!result.initialized) return;
+
+      // Copy audio samples to output buffer
+      const out = e.outputBuffer.getChannelData(0);
+      const src = result.audio;
+      const len = Math.min(src.length, out.length);
+      for (let i = 0; i < len; i++) out[i] = src[i];
+
+      // Update LEDs
+      updateLeds(result.leds);
+
+      // Render display (happens at audio rate — typically ~23 fps at 2048 buf / 48kHz)
+      renderDisplay(pmd.getRAM());
+    };
+
+    scriptNode.connect(audioCtx.destination);
+  };
+
+  // ── User interaction ───────────────────────────────────────────────────────
+
+  document.getElementById("overlay").addEventListener("click", start);
+  document.getElementById("btn-reset").addEventListener("click", () => {
+    if (pmd) pmd.reset();
+  });
+
+  // Keyboard
+  window.addEventListener("keydown", (e) => {
+    // Ctrl = STOP key
+    const code = e.ctrlKey ? 27 : e.keyCode;
+    keymap.set(code, true);
+    // Prevent browser defaults for most emulator keys
+    if (code !== 116 && !(e.altKey || e.metaKey)) e.preventDefault();
+  });
+  window.addEventListener("keyup", (e) => {
+    const code = e.ctrlKey ? 27 : e.keyCode;
+    keymap.delete(code);
+  });
+
+  // ── Tape transport UI ───────────────────────────────────────────────────────
+
+  const tapeInfoEl    = document.getElementById("tape-info");
+  const btnRewind     = document.getElementById("btn-tape-rewind");
+  const btnPlay       = document.getElementById("btn-tape-play");
+  const btnRec        = document.getElementById("btn-tape-rec");
+  const btnStop       = document.getElementById("btn-tape-stop");
+  let   tapeFileName  = null;
+  let   tapeDataLen   = 0;
+
+  const updateTapeUI = () => {
+    if (!pmd) return;
+    const playing   = pmd.tape.isPlaying();
+    const recording = pmd.tape.isRecording();
+    btnPlay.classList.toggle("tape-active", playing);
+    btnRec.classList.toggle("tape-active", recording);
+    if (recording) {
+      tapeInfoEl.textContent = `⏺ Recording… (${pmd.tape.getWriteBuffer().length} bytes)`;
+    } else if (playing) {
+      tapeInfoEl.textContent =
+        `▶ Playing… ${pmd.tape.readPos()} / ${tapeDataLen} bytes` +
+        (tapeFileName ? ` — ${tapeFileName}` : "");
+    } else if (tapeFileName) {
+      tapeInfoEl.textContent =
+        `Tape: ${tapeFileName} — ${pmd.tape.readPos()} / ${tapeDataLen} bytes`;
+    } else {
+      tapeInfoEl.textContent = "No tape loaded";
+    }
+  };
+
+  // Update tape status a few times per second (driven by a simple interval)
+  setInterval(() => { if (running) updateTapeUI(); }, 500);
+
+  /**
+   * Parse tape file bytes into a Uint8Array of tape data.
+   *
+   * Supported formats:
+   *   .pmd      — JSON: [header_string, [byte, byte, ...]]
+   *   .pmdtape  — JSON: [byte, byte, ...]  (flat array, saved by this demo)
+   *   .bin      — raw binary bytes
+   */
+  const parseTapeFile = (rawBytes, fileName) => {
+    if (fileName.endsWith(".pmd") || fileName.endsWith(".pmdtape")) {
+      try {
+        const parsed = JSON.parse(new TextDecoder().decode(rawBytes));
+        // .pmd format: [name_string, [bytes]]
+        if (Array.isArray(parsed) && parsed.length === 2 &&
+            typeof parsed[0] === "string" && Array.isArray(parsed[1])) {
+          return new Uint8Array(parsed[1]);
+        }
+        // .pmdtape format: flat [bytes]
+        if (Array.isArray(parsed)) {
+          return new Uint8Array(parsed);
+        }
+      } catch { /* fall through to raw bytes */ }
+    }
+    return rawBytes;  // .bin or unrecognised — treat as raw
+  };
+
+  // Tape load
+  document.getElementById("tape-load").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const raw  = new Uint8Array(ev.target.result);
+      const data = parseTapeFile(raw, file.name);
+      if (pmd) {
+        pmd.tape.stop();
+        pmd.tape.setReadBuffer(data);
+      }
+      tapeFileName = file.name;
+      tapeDataLen  = data.length;
+      updateTapeUI();
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = "";
+  });
+
+  btnRewind.addEventListener("click", () => {
+    if (!pmd) return;
+    pmd.tape.rewind();
+    updateTapeUI();
+  });
+
+  btnPlay.addEventListener("click", () => {
+    if (!pmd) return;
+    if (tapeDataLen === 0) { alert("Load a tape first."); return; }
+    pmd.tape.play();
+    updateTapeUI();
+  });
+
+  btnRec.addEventListener("click", () => {
+    if (!pmd) return;
+    pmd.tape.record();
+    tapeFileName = null;
+    tapeDataLen  = 0;
+    updateTapeUI();
+  });
+
+  btnStop.addEventListener("click", () => {
+    if (!pmd) return;
+    pmd.tape.stop();
+    updateTapeUI();
+  });
+
+  // Tape save
+  document.getElementById("btn-save-tape").addEventListener("click", () => {
+    if (!pmd) return;
+    const data = pmd.tape.getWriteBuffer();
+    if (data.length === 0) { alert("No recorded tape data."); return; }
+    const blob = new Blob([JSON.stringify(["PMD-85 recording", [...data]])], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "recording.pmd";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  // Fallback: if AudioContext is not available or fails, use rAF loop
+  window.addEventListener("error", (e) => {
+    if (!running || audioCtx) return;
+    console.warn("Audio fallback: requestAnimationFrame loop");
+    const tPerFrame = Math.floor(FCPU / 50);   // 50 fps
+    const loop = () => {
+      if (!running) return;
+      keyMatrix = buildKeyMatrix();
+      const result = pmd.frame(tPerFrame, keyMatrix);
+      if (result.initialized) {
+        updateLeds(result.leds);
+        renderDisplay(pmd.getRAM());
+      }
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+</script>
+
+</body>
+</html>

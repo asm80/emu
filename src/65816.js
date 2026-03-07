@@ -1613,6 +1613,8 @@ const createCPU65816 = () => {
       }
     },
 
+    singleStep: () => step(),
+
     /**
      * Get total cycle count
      */

@@ -73,6 +73,10 @@ Reset CPU to initial state (PC=0, SP=0, all registers cleared).
 Execute N CPU cycles.
 - `cycles` - Number of cycles to execute
 
+**`singleStep()`**
+Execute one instruction and return the number of T-states it consumed.
+- **Returns:** Number of T-states consumed by the executed instruction
+
 **`set(register, value)`**
 Set register value.
 - `register` - Register name (case-insensitive): "A", "B", "C", "D", "E", "H", "L", "F", "PC", "SP"
@@ -219,6 +223,7 @@ export default (callbacks) => {
   return {
     reset: () => { /* ... */ },
     steps: (n) => { /* ... */ },
+    singleStep: () => { /* execute one instruction, return T-states consumed */ },
     // ... other methods
   };
 };

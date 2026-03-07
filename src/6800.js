@@ -1282,6 +1282,7 @@ export default (callbacks) => {
 
   return {
     steps,
+    singleStep: () => step(),
     T: getCycles,
     memr,
     reset,
