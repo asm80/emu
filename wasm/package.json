@@ -1,0 +1,20 @@
+{
+  "name": "@asm80/emu-wasm",
+  "version": "0.1.0",
+  "description": "Intel 8080 emulator core in AssemblyScript/WASM with Web Worker wrapper",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "asc assembly/index.ts --config asconfig.json --target release",
+    "build:dev": "asc assembly/index.ts --config asconfig.json --target debug",
+    "test": "node node_modules/qunit/bin/qunit.js test/8080.wasm.test.js",
+    "test:worker": "node node_modules/qunit/bin/qunit.js test/worker.integration.test.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27",
+    "qunit": "^2.25.0"
+  }
+}

@@ -30,7 +30,8 @@
     "test:report": "c8 report --reporter=html",
     "test:report:text": "c8 report --reporter=text",
     "demo": "node test/8080-demo.js",
-    "pub": "npm version patch && git push --follow-tags && npm publish --access=public"
+    "pub": "npm version patch && git push --follow-tags && npm publish --access=public",
+    "build:wasm": "cd wasm && npm install && npm run build"
   },
   "repository": {
     "type": "git",

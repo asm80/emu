@@ -1,0 +1,21 @@
+{
+  "targets": {
+    "release": {
+      "outFile": "out/8080.wasm",
+      "optimizeLevel": 3,
+      "shrinkLevel": 1,
+      "noAssert": true
+    },
+    "debug": {
+      "outFile": "out/8080.debug.wasm",
+      "debug": true,
+      "optimizeLevel": 0
+    }
+  },
+  "options": {
+    "runtime": "stub",
+    "initialMemory": 3,
+    "maximumMemory": 3,
+    "exportRuntime": false
+  }
+}
