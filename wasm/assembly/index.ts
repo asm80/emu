@@ -11,6 +11,8 @@ export {
   getInterceptCount,
   memGet,
   memSet,
+  portGet,
+  portSet,
   REGION_RAM,
   REGION_ROM,
   REGION_MMIO,
@@ -19,13 +21,11 @@ export {
 } from "./memory";
 
 export {
-  getSpeakerBit,
-  setSpeakerBit,
   cpuReset    as reset,
   cpuStep     as step,
   cpuStatus   as status,
   cpuSetReg   as setReg,
-  cpuInterrupt as interrupt,
+  cpuRaiseIrq as raiseIrq,
   cpuGetCycles  as getCycles,
   cpuRunTicks   as runTicks,
   cpuGetPC    as getPC,

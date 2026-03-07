@@ -2,7 +2,7 @@
  * Intel 8080 WASM emulator — Web Worker entry point.
  *
  * Message protocol (main thread → Worker):
- *   { type: 'init', wasmUrl, intercepts?, romRegions?, cpuFreq? }
+ *   { type: 'init', wasmUrl, intercepts?, romRegions?, cpuFreq?, peripherals? }
  *   { type: 'frame', tStates }
  *   { type: 'step' }
  *   { type: 'run' }
@@ -13,6 +13,7 @@
  *   { type: 'setReg', id, value }
  *   { type: 'memWrite', addr, value }
  *   { type: 'interrupt', vector }
+ *   { type: 'peripheral.in', id, data }      — vstup do periferie (klávesnice apod.)
  *
  * Message protocol (Worker → main thread):
  *   { type: 'ready', memoryBuffer }          — after init, transfers shared memory ref
@@ -21,12 +22,45 @@
  *   { type: 'break', pc }                    — breakpoint hit
  *   { type: 'halt', pc }                     — HLT instruction executed
  *   { type: 'error', message }               — init or runtime error
+ *   { type: 'peripheral.out', id, data }     — výstup z periferie (TX byte apod.)
  */
+
+import { createPeripheralBus } from "./peripheral-bus.js";
+import { createAcia6850 }      from "./acia6850.js";
+import { createAcia6551 }      from "./acia6551.js";
+import { createSimpleSerial }  from "./simple-serial.js";
 
 // Default CPU frequency (Hz) — overridden by init message
 const DEFAULT_CPU_FREQ = 2_000_000;
-const AUDIO_RATE       = 44_100;
-const OFFSET_REGS      = 0x10010;  // matches memory.ts OFFSET_REGS
+const OFFSET_REGS      = 0x20000;  // matches memory.ts OFFSET_REGS
+
+// ─── Adaptéry periferií ───────────────────────────────────────────────────────
+
+const PERIPHERAL_ADAPTERS = {
+  "acia6850": {
+    create: (cfg, onOutput) =>
+      createAcia6850({ basePort: cfg.basePort,
+                       onTx: (ch) => onOutput({ charCode: ch }) }),
+    input: (dev, data) => dev.rxPush(data.charCode),
+  },
+  "acia6551": {
+    create: (cfg, onOutput) =>
+      createAcia6551({ basePort: cfg.basePort,
+                       onTx: (ch) => onOutput({ charCode: ch }) }),
+    input: (dev, data) => dev.rxPush(data.charCode),
+  },
+  "simple-serial": {
+    create: (cfg, onOutput) =>
+      createSimpleSerial({ inPort: cfg.inPort, outPort: cfg.outPort,
+                           statusPort: cfg.statusPort,
+                           availableMask: cfg.availableMask ?? 0x01,
+                           readyMask:     cfg.readyMask     ?? 0x02,
+                           onTx: (ch) => onOutput({ charCode: ch }) }),
+    input: (dev, data) => dev.rxPush(data.charCode),
+  },
+};
+
+// ─── Stav workeru ─────────────────────────────────────────────────────────────
 
 let wasm         = null;   // WebAssembly instance
 let wasmMemory   = null;   // WebAssembly.Memory
@@ -36,17 +70,13 @@ let totalT       = 0;
 let running      = false;
 let breakpoints  = new Set();
 
+let bus                  = createPeripheralBus();
+const peripheralRegistry = new Map();   // id → { dev, adapter }
+
 // MMIO dispatch table — populated by consumer via 'init' intercepts config
 // Each entry: { start, end, read(addr), write(addr, val) }
 const mmioRegions = [];
 
-// Speaker bit — updated by portOut handler, polled per T-state
-let speakerBit = 0;
-
-// ─── Reg ID constants (must match cpu.ts cpuSetReg IDs) ───────────────────────
-const REG_ID = {
-  PC: 0, SP: 1, A: 2, B: 3, C: 4, D: 5, E: 6, H: 7, L: 8, F: 9,
-};
 
 // ─── WASM imports ─────────────────────────────────────────────────────────────
 
@@ -63,19 +93,8 @@ const makeImports = () => ({
         if (addr >= r.start && addr < r.end && r.write) { r.write(addr, val); return; }
       }
     },
-    js_portIn: (port) => {
-      for (const r of mmioRegions) {
-        if (r.portRead) return r.portRead(port);
-      }
-      return 0xFF;
-    },
-    js_portOut: (port, val) => {
-      for (const r of mmioRegions) {
-        if (r.portWrite) { r.portWrite(port, val); }
-      }
-      // Speaker bit is tracked externally — consumer must call wasm.exports.setSpeakerBit()
-      // or update speakerBit via portWrite callback
-    },
+    js_portIn:  (port) => bus.portIn(port),
+    js_portOut: (port, val) => bus.portOut(port, val),
   },
 });
 
@@ -152,6 +171,21 @@ onmessage = async ({ data }) => {
           }
         }
 
+        // Registrace periferií
+        bus.unregisterAll();
+        peripheralRegistry.clear();
+
+        for (const cfg of (data.peripherals ?? [])) {
+          const adapter = PERIPHERAL_ADAPTERS[cfg.type];
+          if (!adapter) continue;
+          const id = cfg.id ?? `${cfg.type}-${cfg.basePort ?? cfg.statusPort}`;
+          const onOutput = (outData) =>
+            postMessage({ type: "peripheral.out", id, data: outData });
+          const dev = adapter.create(cfg, onOutput);
+          bus.register(dev);
+          peripheralRegistry.set(id, { dev, adapter });
+        }
+
         // Send ready — share memory buffer reference (not transfer, it's shared)
         postMessage({ type: "ready", memoryBuffer: wasmMemory.buffer });
       } catch (e) {
@@ -163,40 +197,21 @@ onmessage = async ({ data }) => {
     case "frame": {
       if (!wasm) { postMessage({ type: "error", message: "Not initialized" }); break; }
 
-      const targetT       = totalT + (data.tStates | 0);
-      const samplesCount  = Math.ceil(AUDIO_RATE / 60);
-      const audioSamples  = new Float32Array(samplesCount);
-      const tPerSample    = cpuFreq / AUDIO_RATE;
-      const frameStartT   = totalT;
-      let sampleIdx       = 0;
+      const targetT = totalT + (data.tStates | 0);
 
       while (totalT < targetT) {
         totalT += wasm.exports.step();
 
-        // Poll speaker bit (consumer updates via setSpeakerBit export)
-        speakerBit = wasm.exports.getSpeakerBit();
-
-        // Downsample: map T-states → audio samples
-        const expected = Math.floor((totalT - frameStartT) / tPerSample);
-        while (sampleIdx < expected && sampleIdx < samplesCount) {
-          audioSamples[sampleIdx++] = speakerBit ? 0.5 : -0.5;
-        }
-
         // Breakpoint check during frame
         if (breakpoints.has(wasm.exports.getPC())) {
           wasm.exports.status();
-          const regs = readRegs();
-          postMessage({ type: "break", pc: regs.pc });
-          postMessage({ type: "frameDone", audioBuffer: audioSamples.buffer },
-                      [audioSamples.buffer]);
+          postMessage({ type: "break", pc: readRegs().pc });
+          postMessage({ type: "frameDone" });
           return;
         }
       }
 
-      postMessage(
-        { type: "frameDone", audioBuffer: audioSamples.buffer },
-        [audioSamples.buffer],
-      );
+      postMessage({ type: "frameDone" });
       break;
     }
 
@@ -251,6 +266,7 @@ onmessage = async ({ data }) => {
 
     case "reset": {
       if (wasm) { wasm.exports.reset(); totalT = 0; }
+      bus.reset();
       break;
     }
 
@@ -274,8 +290,14 @@ onmessage = async ({ data }) => {
       break;
     }
 
-    case "interrupt": {
-      if (wasm) wasm.exports.interrupt(data.vector || 0x38);
+    case "raiseIrq": {
+      if (wasm) wasm.exports.raiseIrq(data.vector || 0x38);
+      break;
+    }
+
+    case "peripheral.in": {
+      const entry = peripheralRegistry.get(data.id);
+      if (entry) entry.adapter.input(entry.dev, data.data);
       break;
     }
   }

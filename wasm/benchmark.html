@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <title>Intel 8080 WASM Benchmark</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      max-width: 720px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+    h1 { color: #7ecfff; font-size: 1.2em; margin-bottom: 4px; }
+    p.sub { color: #888; font-size: 0.85em; margin: 0 0 24px; }
+    button {
+      background: #2a6faa;
+      color: #fff;
+      border: none;
+      padding: 10px 24px;
+      font-family: monospace;
+      font-size: 1em;
+      cursor: pointer;
+      border-radius: 3px;
+      margin-bottom: 24px;
+    }
+    button:disabled { background: #444; cursor: default; }
+    #log {
+      background: #111;
+      border: 1px solid #333;
+      padding: 16px;
+      white-space: pre;
+      font-size: 0.88em;
+      line-height: 1.6;
+      min-height: 180px;
+    }
+    .ok   { color: #7dce82; }
+    .head { color: #7ecfff; }
+    .dim  { color: #666; }
+    .warn { color: #f0c060; }
+  </style>
+</head>
+<body>
+
+<h1>Intel 8080 WASM Benchmark</h1>
+<p class="sub">Porovnání JS CPU vs WASM step() vs WASM runTicks() — běží v browser Web Workeru</p>
+
+<button id="btn">Spustit benchmark</button>
+
+<div id="log"><span class="dim">Připraven. Stiskni tlačítko.</span></div>
+
+<script type="module">
+// ─── Program (Intel HEX — memory copy loop) ───────────────────────────────────
+//
+// :100000003E233C21393006FF7E12132305C208002F
+// :03001000C300002A
+//
+// 0000: MVI A,0x23 / INR A / LXI H,0x3039 / MVI B,0xFF
+// 0008: MOV A,[HL] / STAX D / INX D / INX H / DCR B / JNZ 0x0008
+// 0010: JMP 0x0000
+
+function parseIntelHex(hexText) {
+  const records = [];
+  for (const line of hexText.trim().split(/\r?\n/)) {
+    if (!line.startsWith(":")) continue;
+    const bytes = line.slice(1).match(/../g).map(h => parseInt(h, 16));
+    const byteCount = bytes[0];
+    const addr      = (bytes[1] << 8) | bytes[2];
+    const recType   = bytes[3];
+    if (recType === 0x01) break;
+    if (recType !== 0x00) continue;
+    records.push({ addr, data: bytes.slice(4, 4 + byteCount) });
+  }
+  return records;
+}
+
+function hexToImage(records) {
+  if (!records.length) return { image: new Uint8Array(0), baseAddr: 0 };
+  const baseAddr = records[0].addr;
+  const last     = records[records.length - 1];
+  const size     = last.addr + last.data.length - baseAddr;
+  const image    = new Uint8Array(size);
+  for (const { addr, data } of records) image.set(data, addr - baseAddr);
+  return { image, baseAddr };
+}
+
+const HEX_SRC = `
+:100000003E233C21393006FF7E12132305C208002F
+:03001000C300002A
+:00000001FF
+`;
+const { image: PROGRAM, baseAddr: PROGRAM_BASE } = hexToImage(parseIntelHex(HEX_SRC));
+
+// ─── Výsledky ────────────────────────────────────────────────────────────────
+
+const TICKS = 100_000_000;
+const RUNS  = 4;
+
+const log   = document.getElementById("log");
+const btn   = document.getElementById("btn");
+
+function write(cls, text) {
+  const s = document.createElement("span");
+  s.className = cls;
+  s.textContent = text;
+  log.appendChild(s);
+}
+function writeln(cls, text) { write(cls, text + "\n"); }
+function fmt(ms)  { return ms.toFixed(2).padStart(8) + " ms"; }
+function mips(ms) { return (TICKS / ms / 1000).toFixed(2).padStart(7) + " M ticks/s"; }
+
+function printResult(label, times) {
+  writeln("head", "\n  " + label);
+  times.forEach((ms, i) => {
+    writeln("ok", `    Run ${i + 1}: ${fmt(ms)}  (${mips(ms)})`);
+  });
+  const avg = times.reduce((a, b) => a + b, 0) / times.length;
+  writeln("ok", `    Avg:   ${fmt(avg)}  (${mips(avg)})`);
+  return avg;
+}
+
+// ─── JS benchmark (src/8080.js přes dynamický import) ─────────────────────────
+
+async function benchJS() {
+  // Dynamický import JS emulátoru — relativní cesta z wasm/ do src/
+  const { default: CPU8080 } = await import("../../src/8080.js");
+  const mem = new Uint8Array(65536);
+  const cpu = CPU8080({
+    byteAt:  (a)    => mem[a & 0xFFFF],
+    byteTo:  (a, v) => { mem[a & 0xFFFF] = v; },
+    portIn:  ()     => 0,
+    portOut: ()     => {},
+  });
+
+  const times = [];
+  for (let run = 0; run < RUNS; run++) {
+    mem.fill(0);
+    mem.set(PROGRAM, PROGRAM_BASE);
+    cpu.reset();
+    const t0 = performance.now();
+    cpu.steps(TICKS);
+    times.push(performance.now() - t0);
+  }
+  return times;
+}
+
+// ─── WASM benchmarky přes Worker ──────────────────────────────────────────────
+//
+// Worker nemá přímý přístup k performance.now() se sub-ms přesností z main threadu,
+// ale může measureovat uvnitř sebe. Pošleme mu "bench" zprávu a on naměří čas sám.
+
+function runWorkerBench(variant) {
+  return new Promise((resolve, reject) => {
+    const w = new Worker("js/bench-worker.js", { type: "module" });
+    w.onmessage = ({ data }) => {
+      if (data.type === "done")  { w.terminate(); resolve(data.times); }
+      if (data.type === "error") { w.terminate(); reject(new Error(data.message)); }
+    };
+    w.onerror = (e) => {
+        w.terminate();
+        const msg = (e.error && e.error.message) || e.message || String(e);
+        reject(new Error("Worker chyba: " + msg));
+      };
+    w.postMessage({ variant, program: PROGRAM.buffer, programBase: PROGRAM_BASE,
+                    ticks: TICKS, runs: RUNS }, [PROGRAM.buffer.slice(0)]);
+  });
+}
+
+// ─── Spuštění ─────────────────────────────────────────────────────────────────
+
+btn.addEventListener("click", async () => {
+  btn.disabled = true;
+  log.textContent = "";
+  writeln("head", `Intel 8080 Benchmark — ${(TICKS / 1_000_000).toFixed(1)} M ticků × ${RUNS} opakování`);
+  writeln("head", "=".repeat(58));
+  writeln("dim",  "(Program: mem-copy loop — MOV/STAX/INX/DCR/JNZ, ~39 T/inner iteraci)\n");
+
+  let avgJS, avgWasmStep, avgWasmTight;
+
+  try {
+    writeln("head", "── JS (src/8080.js) ──────────────────────────────────────");
+    const timesJS = await benchJS();
+    avgJS = printResult("JavaScript", timesJS);
+  } catch (e) {
+    writeln("warn", "  JS benchmark selhal: " + e.message);
+  }
+
+  try {
+    writeln("head", "\n── WASM step() z JS smyčky ───────────────────────────────");
+    const timesWasmStep = await runWorkerBench("step");
+    avgWasmStep = printResult("WASM (step z JS)", timesWasmStep);
+  } catch (e) {
+    writeln("warn", "  WASM step benchmark selhal: " + e.message);
+  }
+
+  try {
+    writeln("head", "\n── WASM runTicks() — smyčka uvnitř WASM ─────────────────");
+    const timesWasmTight = await runWorkerBench("runTicks");
+    avgWasmTight = printResult("WASM (tight loop)", timesWasmTight);
+  } catch (e) {
+    writeln("warn", "  WASM runTicks benchmark selhal: " + e.message);
+  }
+
+  if (avgJS && avgWasmStep && avgWasmTight) {
+    writeln("head", "\n── Srovnání (průměry) ──────────────────────────────────");
+    const r1 = avgJS / avgWasmStep;
+    const r2 = avgJS / avgWasmTight;
+    writeln("ok", `  WASM step/JS loop vs JS  : ${r1 > 1 ? "WASM" : "JS"} ${Math.max(r1, 1/r1).toFixed(2)}× rychlejší`);
+    writeln("ok", `  WASM tight loop   vs JS  : ${r2 > 1 ? "WASM" : "JS"} ${Math.max(r2, 1/r2).toFixed(2)}× rychlejší`);
+  }
+
+  btn.disabled = false;
+});
+</script>
+</body>
+</html>

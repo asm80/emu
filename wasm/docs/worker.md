@@ -21,12 +21,16 @@ Protokol zpráv je **identický** v obou implementacích.
 ```
 Hlavní vlákno                 Worker
      │                           │
-     │──── init ────────────────►│  načte WASM, nakonfiguruje intercept, nahraje ROM
+     │──── init ────────────────►│  načte WASM, nakonfiguruje intercept, nahraje ROM,
+     │                           │  registruje periferie
      │◄─── ready ────────────────│
      │                           │
      │──── memWriteBlock ────────►│  nahraje program do RAM
      │──── frame ────────────────►│  spustí tight loop (33 333 T při 60 fps / 2 MHz)
      │◄─── frameDone ────────────│  vrátí audio buffer
+     │◄─── peripheral.out ───────│  (kdykoliv CPU pošle byte přes OUT instrukci)
+     │                           │
+     │──── peripheral.in ────────►│  vstup z UI (klávesnice, RX byte)
      │                           │
      │──── step ─────────────────►│  jeden krok (debugger)
      │◄─── status ───────────────│
@@ -56,6 +60,9 @@ worker.postMessage({
   ],
   romRegions: [                  // Počáteční obsah paměti (volitelné)
     { offset: 0x0000, data: ArrayBuffer },
+  ],
+  peripherals: [                 // Periferie (volitelné) — viz níže
+    { type: "acia6850", id: "serial", basePort: 0x80 },
   ],
 });
 ```
@@ -292,3 +299,99 @@ const row = kbReader.getRow(2);
 
 > Keyboard helper je připraven ale není zapojen do node-emu-worker.js — consumer
 > si jej napojí přes `js_portIn` callback v MMIO konfiguraci.
+
+---
+
+## Periferie — `peripheral.in` / `peripheral.out`
+
+Worker obsahuje vestavěný **peripheral bus** a sadu adaptérů pro standardní periferie.
+Komunikace s okolím (terminál, UI) probíhá přes dvě generické zprávy s libovolným datovým
+payloadem — protokol nevyžaduje změnu při přidání nové periferie.
+
+### Konfigurace v `init`
+
+```javascript
+peripherals: [
+  // ACIA Motorola MC6850 — 2 porty: basePort (control/status), basePort+1 (data)
+  { type: "acia6850", id: "serial", basePort: 0x80 },
+
+  // ACIA 6551 — 2 porty: basePort (status/command), basePort+1 (data), RX FIFO
+  { type: "acia6551", id: "serial", basePort: 0xA0 },
+
+  // Simple Serial — 3 nezávislé porty (mohou být na různých adresách)
+  {
+    type:          "simple-serial",
+    id:            "serial",
+    inPort:        0x80,    // IN → přijatý byte
+    outPort:       0x81,    // OUT → odeslaný byte
+    statusPort:    0x82,    // IN → stav (availableMask | readyMask)
+    availableMask: 0x01,    // bit: RX data čeká (výchozí 0x01)
+    readyMask:     0x02,    // bit: TX připraven (výchozí 0x02)
+  },
+]
+```
+
+`id` je volitelné — výchozí hodnota je `"<type>-<basePort>"` (např. `"acia6850-128"`).
+
+---
+
+### `peripheral.in` (hlavní vlákno → Worker)
+
+Doručí vstupní data do registrované periferie. Payload (`data`) je specifický pro typ periferie.
+
+```javascript
+// ACIA 6850 / ACIA 6551 / Simple Serial — přijatý znak (z klávesnice, souboru apod.)
+worker.postMessage({
+  type: "peripheral.in",
+  id:   "serial",
+  data: { charCode: 65 },   // 'A'
+});
+
+// PPI 8255 (budoucnost) — hodnota vstupního portu
+worker.postMessage({
+  type: "peripheral.in",
+  id:   "ppi",
+  data: { port: "A", value: 0b11001100 },
+});
+```
+
+*Bez odpovědi.*
+
+---
+
+### `peripheral.out` (Worker → hlavní vlákno)
+
+Emitováno kdykoliv periferie produkuje výstup (CPU provedl OUT instrukci na TX port).
+
+```javascript
+// ACIA / Simple Serial — odeslaný znak
+{ type: "peripheral.out", id: "serial", data: { charCode: 72 } }
+
+// PPI 8255 (budoucnost) — zápis na výstupní port
+{ type: "peripheral.out", id: "ppi", data: { port: "B", value: 0x42 } }
+```
+
+---
+
+### Schémata `data` payloadů dle typu periferie
+
+| Typ periferie | `peripheral.in` data | `peripheral.out` data |
+|---|---|---|
+| `acia6850` | `{ charCode: number }` | `{ charCode: number }` |
+| `acia6551` | `{ charCode: number }` | `{ charCode: number }` |
+| `simple-serial` | `{ charCode: number }` | `{ charCode: number }` |
+
+---
+
+### Přidání nové periferie
+
+Přidej klíč do `PERIPHERAL_ADAPTERS` v `node-emu-worker.js` (a `emu-worker.js`):
+
+```javascript
+"ppi8255": {
+  create: (cfg, onOutput) =>
+    createPpi8255({ basePort: cfg.basePort,
+                    onOutput }),         // volá onOutput({ port, value })
+  input: (dev, data) => dev.setPort(data.port, data.value),
+},
+```

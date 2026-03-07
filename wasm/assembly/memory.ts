@@ -118,3 +118,19 @@ export function memGet(addr: u16): u8 {
 export function memSet(addr: u16, val: u8): void {
   store<u8>(CPU_BASE + (addr as i32), val);
 }
+
+/**
+ * Čtení I/O portu z JS strany — prochází přes js_portIn (peripheral bus).
+ * Analogie memGet pro debugger / testovací harness.
+ */
+export function portGet(port: u8): u8 {
+  return js_portIn(port);
+}
+
+/**
+ * Zápis na I/O port z JS strany — prochází přes js_portOut (peripheral bus).
+ * Analogie memSet pro debugger / testovací harness.
+ */
+export function portSet(port: u8, val: u8): void {
+  js_portOut(port, val);
+}

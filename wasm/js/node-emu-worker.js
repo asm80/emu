@@ -7,19 +7,59 @@
  *   - readFileSync místo fetch()
  *   - WASM memory je instance.exports.memory (importMemory: false)
  *
- * Protokol zpráv je shodný s emu-worker.js — viz tamní JSDoc.
+ * Protokol zpráv je shodný s emu-worker.js — viz docs/worker.md.
  */
 
 import { workerData, parentPort } from "worker_threads";
 import { readFileSync }           from "fs";
 
+import { createPeripheralBus } from "./peripheral-bus.js";
+import { createAcia6850 }      from "./acia6850.js";
+import { createAcia6551 }      from "./acia6551.js";
+import { createSimpleSerial }  from "./simple-serial.js";
+
 // ─── Konstanty ────────────────────────────────────────────────────────────────
 
 const DEFAULT_CPU_FREQ = 2_000_000;
-const AUDIO_RATE       = 44_100;
 
 // Musí odpovídat OFFSET_REGS v memory.ts (stránka 2, 0x20000)
 const OFFSET_REGS      = 0x20000;
+
+// ─── Adaptéry periferií ───────────────────────────────────────────────────────
+//
+// Každý adaptér ví, jak vytvořit periferii z konfigurace a jak do ní
+// doručit vstupní data (peripheral.in). Přidání nové periferie = nový klíč.
+
+const PERIPHERAL_ADAPTERS = {
+  "acia6850": {
+    create: (cfg, onOutput) =>
+      createAcia6850({
+        basePort: cfg.basePort,
+        onTx: (ch) => onOutput({ charCode: ch }),
+      }),
+    input: (dev, data) => dev.rxPush(data.charCode),
+  },
+  "acia6551": {
+    create: (cfg, onOutput) =>
+      createAcia6551({
+        basePort: cfg.basePort,
+        onTx: (ch) => onOutput({ charCode: ch }),
+      }),
+    input: (dev, data) => dev.rxPush(data.charCode),
+  },
+  "simple-serial": {
+    create: (cfg, onOutput) =>
+      createSimpleSerial({
+        inPort:        cfg.inPort,
+        outPort:       cfg.outPort,
+        statusPort:    cfg.statusPort,
+        availableMask: cfg.availableMask ?? 0x01,
+        readyMask:     cfg.readyMask     ?? 0x02,
+        onTx: (ch) => onOutput({ charCode: ch }),
+      }),
+    input: (dev, data) => dev.rxPush(data.charCode),
+  },
+};
 
 // ─── Stav workeru ─────────────────────────────────────────────────────────────
 
@@ -29,7 +69,10 @@ let totalT      = 0;
 let running     = false;
 let breakpoints = new Set();
 
-const mmioRegions = [];   // MMIO dispatch tabulka
+let bus                = createPeripheralBus();
+const peripheralRegistry = new Map();   // id → { dev, adapter }
+
+const mmioRegions = [];   // MMIO dispatch tabulka (memory-mapped I/O)
 
 // ─── WASM imports ─────────────────────────────────────────────────────────────
 
@@ -46,17 +89,8 @@ const makeImports = () => ({
         if (addr >= r.start && addr < r.end && r.write) { r.write(addr, val); return; }
       }
     },
-    js_portIn: (port) => {
-      for (const r of mmioRegions) {
-        if (r.portRead) return r.portRead(port);
-      }
-      return 0xFF;
-    },
-    js_portOut: (port, val) => {
-      for (const r of mmioRegions) {
-        if (r.portWrite) r.portWrite(port, val);
-      }
-    },
+    js_portIn:  (port) => bus.portIn(port),
+    js_portOut: (port, val) => bus.portOut(port, val),
     abort: (_msg, _file, _line, _col) => { throw new Error("WASM abort"); },
   },
 });
@@ -122,6 +156,21 @@ parentPort.on("message", async (data) => {
           }
         }
 
+        // Registrace periferií
+        bus.unregisterAll();
+        peripheralRegistry.clear();
+
+        for (const cfg of (data.peripherals ?? [])) {
+          const adapter = PERIPHERAL_ADAPTERS[cfg.type];
+          if (!adapter) continue;
+          const id = cfg.id ?? `${cfg.type}-${cfg.basePort ?? cfg.statusPort}`;
+          const onOutput = (outData) =>
+            parentPort.postMessage({ type: "peripheral.out", id, data: outData });
+          const dev = adapter.create(cfg, onOutput);
+          bus.register(dev);
+          peripheralRegistry.set(id, { dev, adapter });
+        }
+
         parentPort.postMessage({ type: "ready" });
       } catch (e) {
         parentPort.postMessage({ type: "error", message: e.message });
@@ -132,36 +181,21 @@ parentPort.on("message", async (data) => {
     case "frame": {
       if (!wasm) { parentPort.postMessage({ type: "error", message: "Not initialized" }); break; }
 
-      const targetT      = totalT + (data.tStates | 0);
-      const samplesCount = Math.ceil(AUDIO_RATE / 60);   // ~735 vzorků
-      const audioSamples = new Float32Array(samplesCount);
-      const tPerSample   = cpuFreq / AUDIO_RATE;
-      const frameStartT  = totalT;
-      let sampleIdx      = 0;
+      const targetT = totalT + (data.tStates | 0);
 
       while (totalT < targetT) {
         totalT += wasm.exports.step();
-
-        // Downsample reproduktoru: 2 MHz → 44 100 Hz
-        const expected = Math.floor((totalT - frameStartT) / tPerSample);
-        while (sampleIdx < expected && sampleIdx < samplesCount) {
-          audioSamples[sampleIdx++] = wasm.exports.getSpeakerBit() ? 0.5 : -0.5;
-        }
 
         // Breakpoint check
         if (breakpoints.has(wasm.exports.getPC())) {
           wasm.exports.status();
           parentPort.postMessage({ type: "break", pc: readRegs().pc });
-          parentPort.postMessage({ type: "frameDone", audioBuffer: audioSamples.buffer },
-                                 [audioSamples.buffer]);
+          parentPort.postMessage({ type: "frameDone" });
           return;
         }
       }
 
-      parentPort.postMessage(
-        { type: "frameDone", audioBuffer: audioSamples.buffer },
-        [audioSamples.buffer],
-      );
+      parentPort.postMessage({ type: "frameDone" });
       break;
     }
 
@@ -175,6 +209,7 @@ parentPort.on("message", async (data) => {
 
     case "reset": {
       if (wasm) { wasm.exports.reset(); totalT = 0; }
+      bus.reset();
       break;
     }
 
@@ -202,8 +237,15 @@ parentPort.on("message", async (data) => {
       break;
     }
 
-    case "interrupt": {
-      if (wasm) wasm.exports.interrupt(data.vector ?? 0x38);
+    case "raiseIrq": {
+      if (wasm) wasm.exports.raiseIrq(data.vector ?? 0x38);
+      break;
+    }
+
+    case "peripheral.in": {
+      // Doručí data do periferie identifikované id-em
+      const entry = peripheralRegistry.get(data.id);
+      if (entry) entry.adapter.input(entry.dev, data.data);
       break;
     }
   }

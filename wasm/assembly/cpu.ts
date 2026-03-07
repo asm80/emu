@@ -32,13 +32,9 @@ let regInte:   u8 = 0;
 let regHalted: u8 = 0;
 let regCycles: i32 = 0;
 
-// Speaker bit (for audio output — set by 8255/port writes in consumer code)
-// Consumer's js_portOut callback updates this via a dedicated mechanism;
-// we expose a getter so the Worker can poll it per T-state.
-let speakerBit: u8 = 0;
-
-export function getSpeakerBit(): u8 { return speakerBit; }
-export function setSpeakerBit(v: u8): void { speakerBit = v; }
+// Pending IRQ — nastaven z JS přes cpuRaiseIrq(), zkontrolován před každou instrukcí
+let pendingIrq:    u8  = 0;
+let pendingVector: u16 = 0x38;
 
 // ─── Register pair helpers ───────────────────────────────────────────────────
 
@@ -547,12 +543,31 @@ function execute(i: i32): void {
 
 // ─── Public API (exported via index.ts) ──────────────────────────────────────
 
+/**
+ * Obsluží čekající IRQ pokud je povoleno přerušení (INTE=1).
+ * Vrátí true pokud byl IRQ obsloužen — step() pak nesmí provést další instrukci.
+ * (Reálný 8080: IRQ "spotřebuje" instrukční cyklus místo normálního fetch.)
+ */
+@inline function serviceIrq(): bool {
+  if (pendingIrq && regInte) {
+    pendingIrq = 0;
+    regHalted  = 0;
+    regInte    = 0;    // DI implicitní při vstupu do ISR (jako reálný 8080)
+    push(regPC);
+    regPC = pendingVector;
+    regCycles += 11;   // RST má 11 T-stavů
+    return true;
+  }
+  return false;
+}
+
 export function cpuReset(): void {
   regPC = 0; regSP = 0; regHalted = 0; regInte = 0;
   regA = 0; regB = 0; regC = 0; regD = 0;
   regE = 0; regH = 0; regL = 0;
   regF = 2;
-  regCycles = 0;
+  regCycles  = 0;
+  pendingIrq = 0;
 }
 
 /**
@@ -560,6 +575,7 @@ export function cpuReset(): void {
  * Returns 1 if CPU is halted (keeps time moving).
  */
 export function cpuStep(): i32 {
+  if (serviceIrq()) return 11;
   if (regHalted) { regCycles++; return 1; }
   const i: i32 = byteAt(regPC) as i32;
   regPC = ((regPC as i32 + 1) & 0xFFFF) as u16;
@@ -600,6 +616,7 @@ export function cpuRunTicks(tStates: i32): i32 {
   const start: i32 = regCycles;
   const target: i32 = start + tStates;
   while (regCycles < target) {
+    if (serviceIrq()) continue;
     if (regHalted) { regCycles++; continue; }
     const i: i32 = byteAt(regPC) as i32;
     regPC = ((regPC as i32 + 1) & 0xFFFF) as u16;
@@ -610,15 +627,13 @@ export function cpuRunTicks(tStates: i32): i32 {
 }
 
 /**
- * Trigger hardware interrupt.
- * @param vector default 0x38
+ * Zařadí IRQ do fronty. Obsluha proběhne před příští instrukcí (v cpuStep/cpuRunTicks).
+ * Pokud INTE=0, IRQ čeká až do EI.
+ * @param vector adresa obslužné rutiny (výchozí 0x38 = RST 7)
  */
-export function cpuInterrupt(vector: u16): void {
-  if (regInte) {
-    regHalted = 0;
-    push(regPC);
-    regPC = vector ? vector : 0x38;
-  }
+export function cpuRaiseIrq(vector: u16): void {
+  pendingIrq    = 1;
+  pendingVector = vector ? vector : 0x38;
 }
 
 /**

@@ -8,7 +8,9 @@
     "build": "asc assembly/index.ts --config asconfig.json --target release",
     "build:dev": "asc assembly/index.ts --config asconfig.json --target debug",
     "test": "node node_modules/qunit/bin/qunit.js test/8080.wasm.test.js",
-    "test:worker": "node node_modules/qunit/bin/qunit.js test/worker.integration.test.js"
+    "test:worker": "node node_modules/qunit/bin/qunit.js test/worker.integration.test.js",
+    "serve": "npx --yes serve . --listen 6503 --no-clipboard",
+    "benchmark": "node test/workerserver.js"
   },
   "engines": {
     "node": ">=22.0.0"

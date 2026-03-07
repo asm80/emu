@@ -109,7 +109,7 @@ const createTestCPU = async () => {
 
     memr: (addr) => mem[addr & 0xFFFF],
 
-    interrupt: (vector) => exp.interrupt(vector || 0x38),
+    interrupt: (vector) => exp.raiseIrq(vector || 0x38),
 
     // flagsToString() — replicated from JS version
     flagsToString: () => {
@@ -436,23 +436,24 @@ QUnit.module("8080 WASM CPU Emulator", () => {
   });
 
   QUnit.module("Interrupt Handling", () => {
-    QUnit.test("interrupt() respects INTE flag — ignored when disabled", async (assert) => {
+    QUnit.test("raiseIrq() respects INTE flag — pending but not serviced when INTE=0", async (assert) => {
       const { cpu, mem } = await createTestCPU();
       cpu.set("SP", 0xF000);
       mem[0] = 0x00; // NOP (INTE stays 0)
       cpu.step();
       const pcBefore = cpu.status().pc;
-      cpu.interrupt(0x38);
-      assert.equal(cpu.status().pc, pcBefore, "Interrupt ignored when INTE=0");
+      cpu.interrupt(0x38);  // nastaví pending, INTE=0 → neobslouží
+      assert.equal(cpu.status().pc, pcBefore, "PC nezměněno — IRQ čeká na EI");
     });
 
-    QUnit.test("interrupt() accepted after EI", async (assert) => {
+    QUnit.test("raiseIrq() obsloužen v příštím step() po EI", async (assert) => {
       const { cpu, mem } = await createTestCPU();
       cpu.set("SP", 0xF000);
       mem[0] = 0xFB; // EI
-      cpu.step();
-      cpu.interrupt(0x08);
-      assert.equal(cpu.status().pc, 0x08, "PC jumped to interrupt vector");
+      cpu.step();              // INTE = 1
+      cpu.interrupt(0x08);    // nastaví pending
+      cpu.step();              // step → serviceIrq → skok na 0x08
+      assert.equal(cpu.status().pc, 0x08, "PC skočil na vektor přerušení");
     });
   });
 

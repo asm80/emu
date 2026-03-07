@@ -32,8 +32,8 @@ import CPU8080                     from "../../src/8080.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WASM_PATH = resolve(__dirname, "../out/8080.wasm");
-const TICKS     = 1_000_000;
-const RUNS      = 3;
+const TICKS     = 550_000_000;
+const RUNS      = 4;
 
 // ─── Pomocné funkce ───────────────────────────────────────────────────────────
 
