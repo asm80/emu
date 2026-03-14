@@ -22,7 +22,14 @@
     "./65816": "./src/65816.js",
     "./65816.js": "./src/65816.js",
     "./z80": "./src/z80.js",
-    "./z80.js": "./src/z80.js"
+    "./z80.js": "./src/z80.js",
+    "./src/devices/pmd/pmd85.js": "./src/devices/pmd/pmd85.js",
+    "./src/devices/pmd/pmd85-tape-decoder.js": "./src/devices/pmd/pmd85-tape-decoder.js",
+    "./src/devices/pmi/pmi80.js": "./src/devices/pmi/pmi80.js",
+    "./src/devices/pmi/pmi80-rom.js": "./src/devices/pmi/pmi80-rom.js",
+    "./src/devices/zxs/zxspectrum.js": "./src/devices/zxs/zxspectrum.js",
+    "./src/devices/zxs/zxs-rom.js": "./src/devices/zxs/zxs-rom.js",
+    "./src/devices/ay3891x/ay3891x.js": "./src/devices/ay3891x/ay3891x.js"
   },
   "scripts": {
     "test": "c8 qunit && c8 report --reporter=html",
@@ -31,6 +38,7 @@
     "test:report:text": "c8 report --reporter=text",
     "demo": "node test/8080-demo.js",
     "demo:pmd": "npx serve . -p 5173 --no-clipboard",
+    "demo:pmi": "npx serve . -p 5173 --no-clipboard",
     "pub": "npm version patch && git push --follow-tags && npm publish --access=public",
     "build:wasm": "cd wasm && npm install && npm run build"
   },

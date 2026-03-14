@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ZX Spectrum Emulator</title>
+  <style>
+    body { background: #1a1a1a; display: flex; flex-direction: column; align-items: center; padding: 20px; font-family: monospace; color: #ccc; }
+    canvas { image-rendering: pixelated; border: 4px solid #555; }
+    #controls { margin: 12px 0; display: flex; gap: 16px; align-items: center; }
+    button { background: #333; color: #eee; border: 1px solid #666; padding: 6px 14px; cursor: pointer; }
+    button:hover { background: #555; }
+    #status { font-size: 12px; color: #888; }
+  </style>
+</head>
+<body>
+  <canvas id="screen" width="352" height="296" style="width:704px; height:592px;"></canvas>
+  <div id="controls">
+    <label>Model:
+      <select id="model">
+        <option value="48k">48k</option>
+        <option value="128k">128k</option>
+      </select>
+    </label>
+    <input type="file" id="snfile" accept=".sna" title="Load .SNA snapshot">
+    <button id="btnReset">Reset</button>
+    <span id="status">Ready — click Reset or load a .SNA to start audio</span>
+  </div>
+
+  <script type="module">
+    import { createZXS } from "./zxspectrum.js";
+
+    const canvas   = document.getElementById("screen");
+    const ctx      = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const imgData  = ctx.createImageData(352, 296);
+
+    let zxs = null;
+
+    // ── Audio ring buffer ────────────────────────────────────────────────────
+    // Pre-allocated Float32Array ring avoids GC pauses that cause crackling.
+    // Power-of-2 size enables fast index wrap with bitwise AND.
+    const RING_BITS = 13;                  // 8192 samples ≈ 186 ms at 44100 Hz
+    const RING_SIZE = 1 << RING_BITS;
+    const RING_MASK = RING_SIZE - 1;
+    const audioRing = new Float32Array(RING_SIZE);
+    let ringRead  = 0;
+    let ringWrite = 0;
+    let ringFill  = 0;
+
+    const addAudio = (samples) => {
+      for (let i = 0; i < samples.length; i++) {
+        if (ringFill < RING_SIZE) {
+          audioRing[ringWrite] = samples[i];
+          ringWrite = (ringWrite + 1) & RING_MASK;
+          ringFill++;
+        }
+      }
+    };
+
+    let audioCtx  = null;
+    let scriptNode = null;
+
+    const initAudio = () => {
+      if (audioCtx) return;
+      audioCtx   = new AudioContext({ sampleRate: 44100 });
+      // 2048-sample buffer → callback fires at ~21.5 Hz (every ~46 ms)
+      // Small buffer = low output latency; ring buffer absorbs RAF jitter
+      scriptNode = audioCtx.createScriptProcessor(2048, 0, 1);
+      scriptNode.onaudioprocess = (e) => {
+        const out = e.outputBuffer.getChannelData(0);
+        for (let i = 0; i < out.length; i++) {
+          if (ringFill > 0) {
+            out[i] = audioRing[ringRead];
+            ringRead = (ringRead + 1) & RING_MASK;
+            ringFill--;
+          } else {
+            out[i] = 0;  // underrun: output silence
+          }
+        }
+      };
+      scriptNode.connect(audioCtx.destination);
+    };
+
+    // ── Keyboard ─────────────────────────────────────────────────────────────
+    const KEY_MATRIX = new Uint8Array(8);
+
+    // Half-row → address line mapping:
+    //   row 0 (A8):  Caps Shift, Z, X, C, V
+    //   row 1 (A9):  A, S, D, F, G
+    //   row 2 (A10): Q, W, E, R, T
+    //   row 3 (A11): 1, 2, 3, 4, 5
+    //   row 4 (A12): 0, 9, 8, 7, 6
+    //   row 5 (A13): P, O, I, U, Y
+    //   row 6 (A14): Enter, L, K, J, H
+    //   row 7 (A15): Space, Sym Shift, M, N, B
+    const KEY_MAP = {
+      "KeyA":        [1, 0], "KeyS":      [1, 1], "KeyD":   [1, 2],
+      "KeyF":        [1, 3], "KeyG":      [1, 4], "KeyQ":   [2, 0],
+      "KeyW":        [2, 1], "KeyE":      [2, 2], "KeyR":   [2, 3],
+      "KeyT":        [2, 4], "Digit1":    [3, 0], "Digit2": [3, 1],
+      "Digit3":      [3, 2], "Digit4":    [3, 3], "Digit5": [3, 4],
+      "Digit0":      [4, 0], "Digit9":    [4, 1], "Digit8": [4, 2],
+      "Digit7":      [4, 3], "Digit6":    [4, 4], "KeyP":   [5, 0],
+      "KeyO":        [5, 1], "KeyI":      [5, 2], "KeyU":   [5, 3],
+      "KeyY":        [5, 4], "Enter":     [6, 0], "KeyL":   [6, 1],
+      "KeyK":        [6, 2], "KeyJ":      [6, 3], "KeyH":   [6, 4],
+      "Space":       [7, 0], "Period":    [7, 1], "KeyM":   [7, 2],
+      "KeyN":        [7, 3], "KeyB":      [7, 4],
+      "ShiftLeft":   [0, 0],  // Caps Shift
+      "ShiftRight":  [7, 1],  // Symbol Shift
+      "KeyZ":        [0, 1], "KeyX":      [0, 2], "KeyC":   [0, 3],
+      "KeyV":        [0, 4],
+    };
+
+    // Multi-key combos: [row, bit] pairs pressed simultaneously
+    const COMBO_MAP = {
+      // Arrow keys = Caps Shift + digit
+      "ArrowLeft":  [[0, 0], [3, 4]],  // Caps + 5
+      "ArrowDown":  [[0, 0], [4, 4]],  // Caps + 6
+      "ArrowUp":    [[0, 0], [4, 3]],  // Caps + 7
+      "ArrowRight": [[0, 0], [4, 2]],  // Caps + 8
+      // Backspace = Caps Shift + 0
+      "Backspace":  [[0, 0], [4, 0]],
+    };
+
+    document.addEventListener("keydown", (e) => {
+      const combo = COMBO_MAP[e.code];
+      if (combo) {
+        combo.forEach(([r, b]) => { KEY_MATRIX[r] |= (1 << b); });
+        e.preventDefault();
+        return;
+      }
+      const m = KEY_MAP[e.code];
+      if (m) { KEY_MATRIX[m[0]] |= (1 << m[1]); e.preventDefault(); }
+    });
+
+    document.addEventListener("keyup", (e) => {
+      const combo = COMBO_MAP[e.code];
+      if (combo) {
+        combo.forEach(([r, b]) => { KEY_MATRIX[r] &= ~(1 << b); });
+        return;
+      }
+      const m = KEY_MAP[e.code];
+      if (m) { KEY_MATRIX[m[0]] &= ~(1 << m[1]); }
+    });
+
+    // ── Emulator control ─────────────────────────────────────────────────────
+    const startEmulator = (model) => {
+      zxs = createZXS({ model, sampleRate: 44100 });
+      zxs.reset();
+      statusEl.textContent = `Running ${model}`;
+    };
+
+    document.getElementById("model").addEventListener("change", (e) => {
+      initAudio();
+      startEmulator(e.target.value);
+    });
+
+    document.getElementById("btnReset").addEventListener("click", () => {
+      initAudio();
+      const model = document.getElementById("model").value;
+      startEmulator(model);
+    });
+
+    document.getElementById("snfile").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      initAudio();
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const data = new Uint8Array(ev.target.result);
+        try {
+          const model = data.length > 100000 ? "128k" : "48k";
+          document.getElementById("model").value = model;
+          startEmulator(model);   // reset + correct HW
+          zxs.loadSNA(data);
+          statusEl.textContent = `Loaded: ${file.name} (${data.length} bytes)`;
+        } catch (err) {
+          statusEl.textContent = `Error: ${err.message}`;
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // ── Main RAF loop ─────────────────────────────────────────────────────────
+    // Timestamp-based T-state calculation: generate exactly dt * cpuHz / 1000
+    // T-states per RAF call. This keeps audio rate == wall clock rate == 44100 Hz,
+    // regardless of monitor refresh rate (50 Hz, 60 Hz, 144 Hz, etc.).
+    let lastTime = null;
+
+    const loop = (timestamp) => {
+      requestAnimationFrame(loop);
+      if (!zxs) return;
+
+      if (lastTime === null) { lastTime = timestamp; return; }
+      let dt = timestamp - lastTime;
+      lastTime = timestamp;
+
+      // Cap dt to avoid "spiral of death" after tab was backgrounded
+      if (dt > 50) dt = 20;
+
+      const model  = document.getElementById("model").value;
+      const cpuHz  = model === "128k" ? 3546900 : 3500000;
+      const tStates = Math.round(dt * cpuHz / 1000);
+
+      const result = zxs.frame(tStates, KEY_MATRIX);
+      if (!result.initialized) return;
+
+      // Render video
+      imgData.data.set(result.video);
+      ctx.putImageData(imgData, 0, 0);
+
+      // Add audio to ring buffer — zero allocation, no GC pressure
+      addAudio(result.audio);
+    };
+
+    // Auto-start (no audio until user interacts — browser policy)
+    startEmulator("48k");
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

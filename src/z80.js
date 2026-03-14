@@ -884,7 +884,7 @@ export default (callbacks) => {
       // I/O with flags
       case 0x40: // IN B,(C)
         if (portIn) {
-          regs[R_B] = portIn(regPairs[RP_BC]) & 0xFF;
+          regs[R_B] = portIn(regPairs[RP_BC], regPairs[RP_BC]) & 0xFF;
           regs[R_F] = (regs[R_F] & FLAG_C) | sz53pTable[regs[R_B]];
         }
         tstates += 12;
@@ -892,7 +892,7 @@ export default (callbacks) => {
 
       case 0x48: // IN C,(C)
         if (portIn) {
-          regs[R_C] = portIn(regPairs[RP_BC]) & 0xFF;
+          regs[R_C] = portIn(regPairs[RP_BC], regPairs[RP_BC]) & 0xFF;
           regs[R_F] = (regs[R_F] & FLAG_C) | sz53pTable[regs[R_C]];
         }
         tstates += 12;
@@ -900,7 +900,7 @@ export default (callbacks) => {
 
       case 0x50: // IN D,(C)
         if (portIn) {
-          regs[R_D] = portIn(regPairs[RP_BC]) & 0xFF;
+          regs[R_D] = portIn(regPairs[RP_BC], regPairs[RP_BC]) & 0xFF;
           regs[R_F] = (regs[R_F] & FLAG_C) | sz53pTable[regs[R_D]];
         }
         tstates += 12;
@@ -908,7 +908,7 @@ export default (callbacks) => {
 
       case 0x58: // IN E,(C)
         if (portIn) {
-          regs[R_E] = portIn(regPairs[RP_BC]) & 0xFF;
+          regs[R_E] = portIn(regPairs[RP_BC], regPairs[RP_BC]) & 0xFF;
           regs[R_F] = (regs[R_F] & FLAG_C) | sz53pTable[regs[R_E]];
         }
         tstates += 12;
@@ -916,7 +916,7 @@ export default (callbacks) => {
 
       case 0x60: // IN H,(C)
         if (portIn) {
-          regs[R_H] = portIn(regPairs[RP_BC]) & 0xFF;
+          regs[R_H] = portIn(regPairs[RP_BC], regPairs[RP_BC]) & 0xFF;
           regs[R_F] = (regs[R_F] & FLAG_C) | sz53pTable[regs[R_H]];
         }
         tstates += 12;
@@ -924,7 +924,7 @@ export default (callbacks) => {
 
       case 0x68: // IN L,(C)
         if (portIn) {
-          regs[R_L] = portIn(regPairs[RP_BC]) & 0xFF;
+          regs[R_L] = portIn(regPairs[RP_BC], regPairs[RP_BC]) & 0xFF;
           regs[R_F] = (regs[R_F] & FLAG_C) | sz53pTable[regs[R_L]];
         }
         tstates += 12;
@@ -932,7 +932,7 @@ export default (callbacks) => {
 
       case 0x70: // IN F,(C) - undocumented
         if (portIn) {
-          const temp = portIn(regPairs[RP_BC]) & 0xFF;
+          const temp = portIn(regPairs[RP_BC], regPairs[RP_BC]) & 0xFF;
           regs[R_F] = (regs[R_F] & FLAG_C) | sz53pTable[temp];
         }
         tstates += 12;
@@ -940,49 +940,49 @@ export default (callbacks) => {
 
       case 0x78: // IN A,(C)
         if (portIn) {
-          regs[R_A] = portIn(regPairs[RP_BC]) & 0xFF;
+          regs[R_A] = portIn(regPairs[RP_BC], regPairs[RP_BC]) & 0xFF;
           regs[R_F] = (regs[R_F] & FLAG_C) | sz53pTable[regs[R_A]];
         }
         tstates += 12;
         break;
 
       case 0x41: // OUT (C),B
-        if (portOut) portOut(regPairs[RP_BC], regs[R_B]);
+        if (portOut) portOut(regPairs[RP_BC], regs[R_B], regPairs[RP_BC]);
         tstates += 12;
         break;
 
       case 0x49: // OUT (C),C
-        if (portOut) portOut(regPairs[RP_BC], regs[R_C]);
+        if (portOut) portOut(regPairs[RP_BC], regs[R_C], regPairs[RP_BC]);
         tstates += 12;
         break;
 
       case 0x51: // OUT (C),D
-        if (portOut) portOut(regPairs[RP_BC], regs[R_D]);
+        if (portOut) portOut(regPairs[RP_BC], regs[R_D], regPairs[RP_BC]);
         tstates += 12;
         break;
 
       case 0x59: // OUT (C),E
-        if (portOut) portOut(regPairs[RP_BC], regs[R_E]);
+        if (portOut) portOut(regPairs[RP_BC], regs[R_E], regPairs[RP_BC]);
         tstates += 12;
         break;
 
       case 0x61: // OUT (C),H
-        if (portOut) portOut(regPairs[RP_BC], regs[R_H]);
+        if (portOut) portOut(regPairs[RP_BC], regs[R_H], regPairs[RP_BC]);
         tstates += 12;
         break;
 
       case 0x69: // OUT (C),L
-        if (portOut) portOut(regPairs[RP_BC], regs[R_L]);
+        if (portOut) portOut(regPairs[RP_BC], regs[R_L], regPairs[RP_BC]);
         tstates += 12;
         break;
 
       case 0x71: // OUT (C),0 - undocumented
-        if (portOut) portOut(regPairs[RP_BC], 0);
+        if (portOut) portOut(regPairs[RP_BC], 0, regPairs[RP_BC]);
         tstates += 12;
         break;
 
       case 0x79: // OUT (C),A
-        if (portOut) portOut(regPairs[RP_BC], regs[R_A]);
+        if (portOut) portOut(regPairs[RP_BC], regs[R_A], regPairs[RP_BC]);
         tstates += 12;
         break;
 
@@ -2245,7 +2245,7 @@ export default (callbacks) => {
 
       case 0xD3: { // OUT (n),A
         const port = fetchByte();
-        if (portOut) portOut(port, regs[R_A]);
+        if (portOut) portOut(port, regs[R_A], (regs[R_A] << 8) | port);
         tstates += 11;
         break;
       }
@@ -2319,7 +2319,7 @@ export default (callbacks) => {
 
       case 0xDB: { // IN A,(n)
         const port = fetchByte();
-        if (portIn) regs[R_A] = portIn(port);
+        if (portIn) regs[R_A] = portIn(port, (regs[R_A] << 8) | port);
         tstates += 11;
         break;
       }
