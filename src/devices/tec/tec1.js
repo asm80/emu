@@ -54,7 +54,7 @@ export const createTEC = (options = {}) => {
   const tPerSample = FCPU / sampleRate;
   const audioBuffer = new Float32Array(Math.ceil(sampleRate / 10) + 2);
   let buzzer = false;
-  let audioEvents = [];
+  let audioEvents = []; // kept for potential future use
   let audioBaseT = 0;
 
   // Keyboard state
@@ -166,31 +166,13 @@ export const createTEC = (options = {}) => {
 
   // ── Audio generation ───────────────────────────────────────────────────
 
-  const generateAudio = (tStates, events) => {
+  const generateAudio = (tStates) => {
     const numSamples = Math.ceil(tStates / tPerSample);
     const buffer = new Float32Array(numSamples);
 
-    if (!events || events.length === 0) {
-      const level = buzzer ? 0.3 : 0;
-      for (let i = 0; i < numSamples; i++) buffer[i] = level;
-      return buffer;
-    }
-
-    // Process audio events for this frame
-    let eventIdx = 0;
-    let nextEvent = events[0];
-
-    for (let i = 0; i < numSamples; i++) {
-      const sampleT = i * tPerSample;
-
-      while (nextEvent && sampleT >= nextEvent[0] - audioBaseT) {
-        eventIdx++;
-        nextEvent = events[eventIdx];
-      }
-
-      const level = nextEvent ? nextEvent[1] : (buzzer ? 0.3 : 0);
-      buffer[i] = level;
-    }
+    // Use current buzzer state for continuous sound
+    const level = buzzer ? 0.2 : 0;
+    for (let i = 0; i < numSamples; i++) buffer[i] = level;
 
     return buffer;
   };
@@ -240,12 +222,8 @@ export const createTEC = (options = {}) => {
     // Execute CPU
     cpu.steps(tStates);
 
-    // Get audio events and reset for next frame
-    const frameAudioEvents = audioEvents;
-    audioEvents = [];
-
     // Generate audio
-    const audio = generateAudio(tStates, frameAudioEvents);
+    const audio = generateAudio(tStates);
 
     return {
       initialized: true,
