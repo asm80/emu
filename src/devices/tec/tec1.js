@@ -105,7 +105,7 @@ export const createTEC = (options = {}) => {
     } else if (port === 2) {
       // Port C: Display segment data
       portC = value & 0xFF;
-      // console.log("portOut 2: portC=", portC.toString(16));
+      if (dbgCounter % 1000 === 0) console.log("port 2 (segments):", portC.toString(16), "=", (portC >>> 0).toString(2).padStart(8,'0'));
     }
 
     // Update display - must be called after BOTH port 1 and 2 are written
