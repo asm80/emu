@@ -176,31 +176,10 @@ export const createTEC = (options = {}) => {
     const numSamples = Math.ceil(tStates / tPerSample);
     const buffer = new Float32Array(numSamples);
 
-    if (audioEvents.length === 0) {
-      // No events - use current buzzer state
-      const level = buzzer ? 0.8 : 0;
-      for (let i = 0; i < numSamples; i++) {
-        buffer[i] = level;
-      }
-      return buffer;
-    }
-
-    // Process audio events
-    let eventIdx = 0;
-    let nextEvent = audioEvents[0];
-
+    // Use current buzzer state for entire frame (simpler, less clicking)
+    const level = buzzer ? 0.3 : 0;
     for (let i = 0; i < numSamples; i++) {
-      const sampleT = i * tPerSample;
-
-      // Check for events
-      while (nextEvent && sampleT >= nextEvent[0] - audioBaseT) {
-        eventIdx++;
-        nextEvent = audioEvents[eventIdx];
-      }
-
-      // Output level based on last event
-      const level = nextEvent ? nextEvent[1] : (buzzer ? 0.8 : 0);
-      buffer[i] = level * 0.8;
+      buffer[i] = level;
     }
 
     return buffer;
