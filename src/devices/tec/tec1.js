@@ -92,8 +92,10 @@ export const createTEC = (options = {}) => {
 
       // Bit 7 = buzzer (1 = on, 0 = off)
       const newBuzzer = (value & 0x80) !== 0;
-      buzzer = newBuzzer;
-      console.log("BUZZER_SET:", buzzer, "t=", cpu ? cpu.t : 0);
+      if (newBuzzer !== buzzer && cpu) {
+        audioEvents.push([cpu.t, newBuzzer ? 1 : 0]);
+        buzzer = newBuzzer;
+      }
 
     } else if (port === 2) {
       // Port C: Display segment data
@@ -164,15 +166,29 @@ export const createTEC = (options = {}) => {
 
   // ── Audio generation ───────────────────────────────────────────────────
 
-  const generateAudio = (tStates) => {
-    // Number of samples for this frame
+  const generateAudio = (tStates, events) => {
     const numSamples = Math.ceil(tStates / tPerSample);
     const buffer = new Float32Array(numSamples);
 
-    // Use current buzzer state for entire frame
-    console.log("GEN_AUDIO: buzzer=", buzzer, "tStates=", tStates, "cpuT=", cpu ? cpu.t : 0);
-    const level = buzzer ? 0.3 : 0;
+    if (!events || events.length === 0) {
+      const level = buzzer ? 0.3 : 0;
+      for (let i = 0; i < numSamples; i++) buffer[i] = level;
+      return buffer;
+    }
+
+    // Process audio events for this frame
+    let eventIdx = 0;
+    let nextEvent = events[0];
+
     for (let i = 0; i < numSamples; i++) {
+      const sampleT = i * tPerSample;
+
+      while (nextEvent && sampleT >= nextEvent[0] - audioBaseT) {
+        eventIdx++;
+        nextEvent = events[eventIdx];
+      }
+
+      const level = nextEvent ? nextEvent[1] : (buzzer ? 0.3 : 0);
       buffer[i] = level;
     }
 
@@ -214,7 +230,6 @@ export const createTEC = (options = {}) => {
     }
 
     currentKeys = keys ?? {};
-    audioEvents = [];
     audioBaseT = cpu.t;
 
     // Reset display state at start of frame
@@ -225,8 +240,12 @@ export const createTEC = (options = {}) => {
     // Execute CPU
     cpu.steps(tStates);
 
+    // Get audio events and reset for next frame
+    const frameAudioEvents = audioEvents;
+    audioEvents = [];
+
     // Generate audio
-    const audio = generateAudio(tStates);
+    const audio = generateAudio(tStates, frameAudioEvents);
 
     return {
       initialized: true,
