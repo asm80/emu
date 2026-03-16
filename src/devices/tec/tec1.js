@@ -93,9 +93,7 @@ export const createTEC = (options = {}) => {
       // Bit 7 = buzzer (1 = on, 0 = off)
       const newBuzzer = (value & 0x80) !== 0;
       if (newBuzzer !== buzzer) {
-        if (cpu) {
-          audioEvents.push([cpu.t, newBuzzer ? 1 : 0]);
-        }
+        console.log("Buzzer:", newBuzzer ? "ON" : "OFF");
         buzzer = newBuzzer;
       }
 
