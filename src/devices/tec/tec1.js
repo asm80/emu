@@ -92,10 +92,8 @@ export const createTEC = (options = {}) => {
 
       // Bit 7 = buzzer (1 = on, 0 = off)
       const newBuzzer = (value & 0x80) !== 0;
-      if (newBuzzer !== buzzer) {
-        console.log("Buzzer:", newBuzzer ? "ON" : "OFF");
-        buzzer = newBuzzer;
-      }
+      buzzer = newBuzzer;
+      console.log("Buzzer set to:", buzzer);
 
     } else if (port === 2) {
       // Port C: Display segment data
