@@ -270,6 +270,8 @@
     keyState[name] = true;
     setKeyVisual(name, true);
     document.getElementById("debug-keys").textContent = "Keys: " + Object.keys(keyState).join(",");
+    // Trigger NMI on key press (74C923 encoder)
+    if (tec) tec.nmi();
   };
 
   const keyUp = (name) => {

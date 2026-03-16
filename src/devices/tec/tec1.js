@@ -263,10 +263,18 @@ export const createTEC = (options = {}) => {
    */
   const getCPU = () => cpu ? cpu.status() : null;
 
+  /**
+   * Trigger NMI (keyboard interrupt).
+   */
+  const nmi = () => {
+    if (cpu) cpu.nmi();
+  };
+
   return {
     reset,
     frame,
     getDisplay,
-    getCPU
+    getCPU,
+    nmi
   };
 };
