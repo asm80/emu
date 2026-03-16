@@ -157,7 +157,7 @@
 <div id="controls">
   <button id="btn-reset" disabled>Reset</button>
   <span id="debug-keys" style="font-size:0.7rem; color:#666; margin-left:20px;">Keys: </span>
-  <span id="debug-port" style="font-size:0.7rem; color:#666; margin-left:20px;">Port: </span>
+  <span id="debug-cpu" style="font-size:0.7rem; color:#666; margin-left:20px;">PC: </span>
 </div>
 
 <!-- Click-to-start overlay (AudioContext autoplay policy) -->
@@ -328,6 +328,7 @@
 
     // Last display snapshot shared between audio thread and rAF render loop
     let latestDisplay = new Array(DIGITS).fill(null);
+    let latestCPU = null;
 
     // ScriptProcessorNode: drives CPU at audio-clock speed to prevent drift
     const scriptNode = audioCtx.createScriptProcessor(bufSize, 0, 1);
@@ -343,6 +344,7 @@
 
       // Share display snapshot for rAF renderer
       latestDisplay = result.display;
+      latestCPU = result.cpu;
     };
     scriptNode.connect(audioCtx.destination);
 
@@ -350,6 +352,11 @@
     const rafLoop = () => {
       if (!running) return;
       renderDisplay(latestDisplay);
+      if (latestCPU) {
+        const s = latestCPU;
+        document.getElementById("debug-cpu").textContent =
+          `PC:${s.pc.toString(16).toUpperCase().padStart(4,'0')} A:${s.a.toString(16).toUpperCase().padStart(2,'0')} BC:${s.bc.toString(16).toUpperCase().padStart(4,'0')} DE:${s.de.toString(16).toUpperCase().padStart(4,'0')} HL:${s.hl.toString(16).toUpperCase().padStart(4,'0')}`;
+      }
       requestAnimationFrame(rafLoop);
     };
     requestAnimationFrame(rafLoop);

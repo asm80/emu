@@ -239,7 +239,8 @@ export const createTEC = (options = {}) => {
     return {
       initialized: true,
       display: [...displayState],
-      audio
+      audio,
+      cpu: cpu.status()
     };
   };
 
@@ -249,9 +250,16 @@ export const createTEC = (options = {}) => {
    */
   const getDisplay = () => [...displayState];
 
+  /**
+   * Get CPU status for debugging.
+   * @returns {object} CPU registers
+   */
+  const getCPU = () => cpu ? cpu.status() : null;
+
   return {
     reset,
     frame,
-    getDisplay
+    getDisplay,
+    getCPU
   };
 };
