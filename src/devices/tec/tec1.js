@@ -52,9 +52,9 @@ export const createTEC = (options = {}) => {
 
   // Audio
   const tPerSample = FCPU / sampleRate;
-  const audioBuffer = new Float32Array(Math.ceil(sampleRate / 10) + 2);
   let buzzer = false;
-  let audioBaseT = 0;
+  // Buzzer transition events recorded during cpu.steps(): [{ t, state }, ...]
+  const audioEvents = [];
 
   // Keyboard state
   let currentKeys = {};
@@ -89,8 +89,12 @@ export const createTEC = (options = {}) => {
       // Port B: Display multiplex + buzzer
       portB = value & 0xFF;
 
-      // Bit 7 = buzzer (1 = on, 0 = off)
-      buzzer = (value & 0x80) !== 0;
+      // Bit 7 = buzzer (1 = on, 0 = off) — record transition for audio reconstruction
+      const newBuzzer = (value & 0x80) !== 0;
+      if (newBuzzer !== buzzer) {
+        audioEvents.push({ t: cpu.T(), state: newBuzzer });
+        buzzer = newBuzzer;
+      }
 
     } else if (port === 2) {
       // Port C: Display segment data
@@ -161,14 +165,22 @@ export const createTEC = (options = {}) => {
 
   // ── Audio generation ───────────────────────────────────────────────────
 
-  const generateAudio = (tStates) => {
+  const generateAudio = (frameStartT, tStates) => {
     const numSamples = Math.ceil(tStates / tPerSample);
     const buffer = new Float32Array(numSamples);
 
-    // Use current buzzer state for continuous sound
-    const level = buzzer ? 0.2 : 0;
-    for (let i = 0; i < numSamples; i++) buffer[i] = level;
-
+    // Reconstruct square wave from buzzer transition events captured during cpu.steps()
+    let level = buzzer ? 0.3 : 0;
+    let evIdx = 0;
+    for (let i = 0; i < numSamples; i++) {
+      const sampleT = frameStartT + i * tPerSample;
+      while (evIdx < audioEvents.length && audioEvents[evIdx].t <= sampleT) {
+        level = audioEvents[evIdx].state ? 0.3 : 0;
+        evIdx++;
+      }
+      buffer[i] = level;
+    }
+    audioEvents.length = 0;
     return buffer;
   };
 
@@ -206,7 +218,7 @@ export const createTEC = (options = {}) => {
     }
 
     currentKeys = keys ?? {};
-    audioBaseT = cpu.t;
+    const frameStartT = cpu.T();
 
     // Reset display state at start of frame
     for (let i = 0; i < 6; i++) {
@@ -216,8 +228,8 @@ export const createTEC = (options = {}) => {
     // Execute CPU
     cpu.steps(tStates);
 
-    // Generate audio
-    const audio = generateAudio(tStates);
+    // Generate audio from transitions recorded during cpu.steps()
+    const audio = generateAudio(frameStartT, tStates);
 
     return {
       initialized: true,
