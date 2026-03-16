@@ -82,8 +82,10 @@ export const createTEC = (options = {}) => {
   // ── Port I/O (8255 PPI) ───────────────────────────────────────────────
 
   const portOut = (addr, value, unused) => {
-    // Z80 calls with 3 args: port, value, combined. Use only lower nibble.
-    const port = addr & 0x0F;
+    // Z80 calls with 3 args: port, value, combined
+    // Use only lower byte of port address
+    const port = addr & 0xFF;
+    console.log("portOut:", port, "value:", value);
 
     if (port === 1) {
       // Port B: Display multiplex + buzzer
@@ -114,8 +116,8 @@ export const createTEC = (options = {}) => {
   };
 
   const portIn = (addr, unused) => {
-    // Z80 calls with 2 args: port, combined. Use only lower nibble.
-    const port = addr & 0x0F;
+    // Z80 calls with 2 args: port, combined
+    const port = addr & 0xFF;
 
     if (port === 0) {
       // Port A: Keyboard input
