@@ -93,7 +93,7 @@ export const createTEC = (options = {}) => {
       // Bit 7 = buzzer (1 = on, 0 = off)
       const newBuzzer = (value & 0x80) !== 0;
       buzzer = newBuzzer;
-      console.log("Buzzer set to:", buzzer);
+      console.log("BUZZER_SET:", buzzer, "t=", cpu ? cpu.t : 0);
 
     } else if (port === 2) {
       // Port C: Display segment data
@@ -169,8 +169,8 @@ export const createTEC = (options = {}) => {
     const numSamples = Math.ceil(tStates / tPerSample);
     const buffer = new Float32Array(numSamples);
 
-    // Use current buzzer state for entire frame (simpler, less clicking)
-    console.log("generateAudio: buzzer=", buzzer);
+    // Use current buzzer state for entire frame
+    console.log("GEN_AUDIO: buzzer=", buzzer, "tStates=", tStates, "cpuT=", cpu ? cpu.t : 0);
     const level = buzzer ? 0.3 : 0;
     for (let i = 0; i < numSamples; i++) {
       buffer[i] = level;
