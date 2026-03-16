@@ -54,7 +54,6 @@ export const createTEC = (options = {}) => {
   const tPerSample = FCPU / sampleRate;
   const audioBuffer = new Float32Array(Math.ceil(sampleRate / 10) + 2);
   let buzzer = false;
-  let audioEvents = []; // kept for potential future use
   let audioBaseT = 0;
 
   // Keyboard state
@@ -91,11 +90,7 @@ export const createTEC = (options = {}) => {
       portB = value & 0xFF;
 
       // Bit 7 = buzzer (1 = on, 0 = off)
-      const newBuzzer = (value & 0x80) !== 0;
-      if (newBuzzer !== buzzer && cpu) {
-        audioEvents.push([cpu.t, newBuzzer ? 1 : 0]);
-        buzzer = newBuzzer;
-      }
+      buzzer = (value & 0x80) !== 0;
 
     } else if (port === 2) {
       // Port C: Display segment data
@@ -186,7 +181,6 @@ export const createTEC = (options = {}) => {
     cpu = createZ80({ byteAt, byteTo, portIn, portOut });
     cpu.reset();
     buzzer = false;
-    audioEvents = [];
     initialized = true;
 
     // Reset display
