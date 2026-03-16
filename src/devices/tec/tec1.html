@@ -351,6 +351,7 @@
     // rAF loop: renders display only
     const rafLoop = () => {
       if (!running) return;
+      console.log("renderDisplay called with:", latestDisplay);
       renderDisplay(latestDisplay);
       if (latestCPU) {
         const s = latestCPU;
