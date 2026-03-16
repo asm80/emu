@@ -320,6 +320,12 @@
     document.getElementById("btn-reset").disabled = false;
 
     const audioCtx = new AudioContext();
+    console.log("AudioContext state:", audioCtx.state);
+
+    // Resume if suspended (needed for some browsers)
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().then(() => console.log("AudioContext resumed:", audioCtx.state));
+    }
     tec = createTEC({ sampleRate: audioCtx.sampleRate });
     tec.reset();
 
