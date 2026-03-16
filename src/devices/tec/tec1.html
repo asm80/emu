@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TEC-1 Emulator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1a1a1a;
+      color: #ccc;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px;
+      gap: 20px;
+      min-height: 100vh;
+    }
+
+    h1 { font-size: 1rem; color: #888; letter-spacing: 4px; text-transform: uppercase; }
+
+    /* ── 7-segment display ── */
+    #display-wrap {
+      background: #111;
+      border: 2px solid #333;
+      border-radius: 6px;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    canvas#display {
+      display: block;
+      image-rendering: pixelated;
+    }
+
+    /* ── Keyboard ── */
+    #keyboard {
+      display: grid;
+      grid-template-columns: repeat(6, 52px);
+      gap: 6px;
+    }
+
+    .key {
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-bottom: 3px solid #555;
+      border-radius: 4px;
+      color: #ccc;
+      cursor: pointer;
+      font-family: monospace;
+      font-size: 0.8rem;
+      height: 44px;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 2px;
+      transition: background 0.05s;
+    }
+
+    .key .label-main { font-size: 1rem; font-weight: bold; color: #eee; }
+    .key .label-kbd  { font-size: 0.6rem; color: #666; }
+
+    .key:active, .key.pressed {
+      background: #3a5a3a;
+      border-bottom-width: 1px;
+      transform: translateY(2px);
+      color: #8f8;
+    }
+
+    .key.key-wide { grid-column: span 2; }
+
+    /* ── Controls bar ── */
+    #controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+    }
+
+    button {
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #ccc;
+      cursor: pointer;
+      font-family: monospace;
+      font-size: 0.8rem;
+      padding: 6px 14px;
+      transition: background 0.1s;
+    }
+
+    button:hover { background: #333; }
+    button:disabled { opacity: 0.4; cursor: default; }
+
+    /* ── Overlay (click-to-start) ── */
+    #overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.85);
+      font-size: 1.1rem;
+      color: #888;
+      cursor: pointer;
+      z-index: 100;
+    }
+
+    #overlay span { border: 1px solid #555; padding: 16px 32px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+
+<h1>TEC-1 Emulator</h1>
+
+<!-- 7-segment display (6 digits × 7 segments) -->
+<div id="display-wrap">
+  <canvas id="display"></canvas>
+</div>
+
+<!-- Keyboard layout matching TEC-1 physical keyboard -->
+<div id="keyboard">
+  <!-- Row 1: 0-9, A-F -->
+  <div class="key" data-key="kb0"><span class="label-main">0</span><span class="label-kbd">0</span></div>
+  <div class="key" data-key="kb1"><span class="label-main">1</span><span class="label-kbd">1</span></div>
+  <div class="key" data-key="kb2"><span class="label-main">2</span><span class="label-kbd">2</span></div>
+  <div class="key" data-key="kb3"><span class="label-main">3</span><span class="label-kbd">3</span></div>
+  <div class="key" data-key="kb4"><span class="label-main">4</span><span class="label-kbd">4</span></div>
+  <div class="key" data-key="kb5"><span class="label-main">5</span><span class="label-kbd">5</span></div>
+  <!-- Row 2 -->
+  <div class="key" data-key="kb6"><span class="label-main">6</span><span class="label-kbd">6</span></div>
+  <div class="key" data-key="kb7"><span class="label-main">7</span><span class="label-kbd">7</span></div>
+  <div class="key" data-key="kb8"><span class="label-main">8</span><span class="label-kbd">8</span></div>
+  <div class="key" data-key="kb9"><span class="label-main">9</span><span class="label-kbd">9</span></div>
+  <div class="key" data-key="kba"><span class="label-main">A</span><span class="label-kbd">A</span></div>
+  <div class="key" data-key="kbb"><span class="label-main">B</span><span class="label-kbd">B</span></div>
+  <!-- Row 3 -->
+  <div class="key" data-key="kbc"><span class="label-main">C</span><span class="label-kbd">C</span></div>
+  <div class="key" data-key="kbd"><span class="label-main">D</span><span class="label-kbd">D</span></div>
+  <div class="key" data-key="kbe"><span class="label-main">E</span><span class="label-kbd">E</span></div>
+  <div class="key" data-key="kbf"><span class="label-main">F</span><span class="label-kbd">F</span></div>
+  <div class="key" data-key="kbplus"><span class="label-main">+</span><span class="label-kbd">+</span></div>
+  <div class="key" data-key="kbminus"><span class="label-main">-</span><span class="label-kbd">-</span></div>
+  <!-- Row 4 -->
+  <div class="key key-wide" data-key="kbgo"><span class="label-main">GO</span><span class="label-kbd">G</span></div>
+  <div class="key key-wide" data-key="kbad"><span class="label-main">AD</span><span class="label-kbd">A</span></div>
+</div>
+
+<!-- Controls -->
+<div id="controls">
+  <button id="btn-reset" disabled>Reset</button>
+</div>
+
+<!-- Click-to-start overlay (AudioContext autoplay policy) -->
+<div id="overlay"><span>Click to start TEC-1</span></div>
+
+<script type="module">
+  import { createTEC } from "./tec1.js";
+
+  const FCPU = 2000000;
+
+  // ── 7-segment display canvas ───────────────────────────────────────────────
+
+  // Segment geometry (per digit, internal coordinates):
+  //   bit0=a(top) bit1=b(top-R) bit2=c(bot-R) bit3=d(bot) bit4=e(bot-L) bit5=f(top-L) bit6=g(mid)
+  const DW  = 26;   // digit width (px, internal)
+  const DH  = 46;   // digit height (px, internal)
+  const GAP = 6;    // gap between digits
+  const DIGITS = 6;
+  const CANVAS_W = DIGITS * (DW + GAP) - GAP;
+  const CANVAS_H = DH + 8;   // +8px top/bottom padding
+
+  // Segment rectangles [bit, x, y, w, h] within one digit cell (0-origin)
+  const SEG_RECTS = [
+    [0,  3,  0, 20,  4],   // a — top horizontal
+    [1, 22,  4,  4, 18],   // b — top-right vertical
+    [2, 22, 26,  4, 18],   // c — bottom-right vertical
+    [3,  3, 44, 20,  4],   // d — bottom horizontal
+    [4,  0, 26,  4, 18],   // e — bottom-left vertical
+    [5,  0,  4,  4, 18],   // f — top-left vertical
+    [6,  3, 22, 20,  4],   // g — middle horizontal
+  ];
+
+  const canvas = document.getElementById("display");
+  canvas.width  = CANVAS_W;
+  canvas.height = CANVAS_H;
+  // CSS: display at 2× size for crispness
+  canvas.style.width  = `${CANVAS_W * 2}px`;
+  canvas.style.height = `${CANVAS_H * 2}px`;
+
+  const ctx = canvas.getContext("2d");
+
+  // Per-digit afterglow state: last rendered segment mask (null = blank)
+  const afterglow = new Array(DIGITS).fill(null);
+
+  /**
+   * Render 6-digit display from frame() result.
+   * display[i] = null (not written) → preserve last rendered value (afterglow)
+   *            = 0–255 (segment bitmask) → draw that digit
+   */
+  const renderDisplay = (display) => {
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    for (let d = 0; d < DIGITS; d++) {
+      const val  = display[d] !== null ? display[d] : afterglow[d];
+      if (display[d] !== null) afterglow[d] = display[d];
+
+      const ox = d * (DW + GAP);  // digit x origin
+      const oy = 4;               // digit y origin (padding)
+
+      for (const [bit, rx, ry, rw, rh] of SEG_RECTS) {
+        const on = val !== null && (val >> bit) & 1;
+        ctx.fillStyle = on ? "#00ff00" : "#003300";
+        ctx.fillRect(ox + rx, oy + ry, rw, rh);
+      }
+    }
+  };
+
+  // Draw blank display on load
+  renderDisplay(new Array(DIGITS).fill(null));
+
+  // ── Keyboard state ─────────────────────────────────────────────────────────
+
+  // Key name → boolean (pressed by keyboard event or mouse click)
+  const keyState = {};
+
+  // Physical keyboard → TEC key mapping
+  const KEY_MAP = {
+    96: "kb0", 48: "kb0",    // Numpad 0 / 0
+    97: "kb1", 49: "kb1",    // Numpad 1 / 1
+    98: "kb2", 50: "kb2",    // Numpad 2 / 2
+    99: "kb3", 51: "kb3",    // Numpad 3 / 3
+    100:"kb4", 52: "kb4",    // Numpad 4 / 4
+    101:"kb5", 53: "kb5",    // Numpad 5 / 5
+    102:"kb6", 54: "kb6",    // Numpad 6 / 6
+    103:"kb7", 55: "kb7",    // Numpad 7 / 7
+    104:"kb8", 56: "kb8",    // Numpad 8 / 8
+    105:"kb9", 57: "kb9",    // Numpad 9 / 9
+    65: "kba",               // A
+    66: "kbb",               // B
+    67: "kbc",               // C
+    68: "kbd",               // D
+    69: "kbe",               // E
+    70: "kbf",               // F
+    187:"kbplus", 107:"kbplus", // = / + (numpad)
+    189:"kbminus", 109:"kbminus", // - / - (numpad)
+    13: "kbgo",              // Enter = GO
+    65: "kbad",              // A = AD (when shifted?)
+  };
+
+  const buildKeyMatrix = () => ({ ...keyState });
+
+  // Highlight on-screen button
+  const setKeyVisual = (name, on) => {
+    const el = document.querySelector(`[data-key="${name}"]`);
+    if (el) el.classList.toggle("pressed", on);
+  };
+
+  const keyDown = (name) => {
+    if (!name) return;
+    keyState[name] = true;
+    setKeyVisual(name, true);
+  };
+
+  const keyUp = (name) => {
+    if (!name) return;
+    delete keyState[name];
+    setKeyVisual(name, false);
+  };
+
+  window.addEventListener("keydown", (e) => {
+    if (e.altKey || e.metaKey || e.ctrlKey) return;
+    const name = KEY_MAP[e.keyCode];
+    if (name) { e.preventDefault(); keyDown(name); }
+  }, { capture: true });
+
+  window.addEventListener("keyup", (e) => {
+    const name = KEY_MAP[e.keyCode];
+    if (name) { e.preventDefault(); keyUp(name); }
+  }, { capture: true });
+
+  // On-screen keyboard mouse events
+  document.querySelectorAll(".key[data-key]").forEach((el) => {
+    const name = el.dataset.key;
+    el.addEventListener("mousedown",  () => keyDown(name));
+    el.addEventListener("mouseup",    () => keyUp(name));
+    el.addEventListener("mouseleave", () => keyUp(name));
+    el.addEventListener("touchstart", (e) => { e.preventDefault(); keyDown(name); });
+    el.addEventListener("touchend",   (e) => { e.preventDefault(); keyUp(name); });
+  });
+
+  // ── Emulator instance ──────────────────────────────────────────────────────
+
+  let tec = null;
+
+  document.getElementById("btn-reset").addEventListener("click", () => {
+    if (tec) tec.reset();
+  });
+
+  // ── Audio + main loop ──────────────────────────────────────────────────────
+
+  let running = false;
+
+  const start = () => {
+    if (running) return;
+    running = true;
+
+    document.getElementById("overlay").style.display = "none";
+    document.getElementById("btn-reset").disabled = false;
+
+    const audioCtx = new AudioContext();
+    tec = createTEC({ sampleRate: audioCtx.sampleRate });
+    tec.reset();
+
+    const bufSize = 2048;
+    const tStatesPerBuf = Math.floor(FCPU / audioCtx.sampleRate * bufSize);
+
+    // Last display snapshot shared between audio thread and rAF render loop
+    let latestDisplay = new Array(DIGITS).fill(null);
+
+    // ScriptProcessorNode: drives CPU at audio-clock speed to prevent drift
+    const scriptNode = audioCtx.createScriptProcessor(bufSize, 0, 1);
+    scriptNode.onaudioprocess = (e) => {
+      const result = tec.frame(tStatesPerBuf, buildKeyMatrix());
+      if (!result.initialized) return;
+
+      // Fill audio buffer
+      const out = e.outputBuffer.getChannelData(0);
+      const src = result.audio;
+      const len = Math.min(src.length, out.length);
+      for (let i = 0; i < len; i++) out[i] = src[i];
+
+      // Share display snapshot for rAF renderer
+      latestDisplay = result.display;
+    };
+    scriptNode.connect(audioCtx.destination);
+
+    // rAF loop: renders display only
+    const rafLoop = () => {
+      if (!running) return;
+      renderDisplay(latestDisplay);
+      requestAnimationFrame(rafLoop);
+    };
+    requestAnimationFrame(rafLoop);
+  };
+
+  document.getElementById("overlay").addEventListener("click", start);
+</script>
+</body>
+</html>
