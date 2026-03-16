@@ -338,7 +338,10 @@
 
     // ScriptProcessorNode: drives CPU at audio-clock speed to prevent drift
     const scriptNode = audioCtx.createScriptProcessor(bufSize, 0, 1);
+    let callCount = 0;
     scriptNode.onaudioprocess = (e) => {
+      callCount++;
+      if (callCount === 1) console.log("onaudioprocess started!");
       const result = tec.frame(tStatesPerBuf, buildKeyMatrix());
       if (!result.initialized) return;
 
