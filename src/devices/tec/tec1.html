@@ -351,6 +351,7 @@
       const out = e.outputBuffer.getChannelData(0);
       const src = result.audio;
       const len = Math.min(src.length, out.length);
+      if (callCount <= 3) console.log("audio:", src[0], "len:", len);
       for (let i = 0; i < len; i++) out[i] = src[i];
 
       // Share display snapshot for rAF renderer
