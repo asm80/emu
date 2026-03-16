@@ -62,7 +62,6 @@ export const createTEC = (options = {}) => {
 
   // CPU
   let cpu = null;
-  let dbgCounter = 0;
 
   // ── Memory functions ─────────────────────────────────────────────────────
 
@@ -86,8 +85,6 @@ export const createTEC = (options = {}) => {
     // Z80 calls with 3 args: port, value, combined
     // Use only lower byte of port address
     const port = addr & 0xFF;
-    dbgCounter++;
-    if (port === 1 && dbgCounter % 1000 === 0) console.log("port 1:", value.toString(16), "display:", displayState);
 
     if (port === 1) {
       // Port B: Display multiplex + buzzer
