@@ -332,10 +332,7 @@
 
     // ScriptProcessorNode: drives CPU at audio-clock speed to prevent drift
     const scriptNode = audioCtx.createScriptProcessor(bufSize, 0, 1);
-    let frameCount = 0;
     scriptNode.onaudioprocess = (e) => {
-      frameCount++;
-      if (frameCount % 60 === 0) console.log("onaudioprocess:", frameCount);
       const result = tec.frame(tStatesPerBuf, buildKeyMatrix());
       if (!result.initialized) return;
 
@@ -350,12 +347,10 @@
       latestCPU = result.cpu;
     };
     scriptNode.connect(audioCtx.destination);
-    console.log("Audio started, state:", audioCtx.state);
 
     // rAF loop: renders display only
     const rafLoop = () => {
       if (!running) return;
-      console.log("renderDisplay called with:", latestDisplay);
       renderDisplay(latestDisplay);
       if (latestCPU) {
         const s = latestCPU;

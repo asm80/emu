@@ -85,7 +85,7 @@ export const createTEC = (options = {}) => {
     // Z80 calls with 3 args: port, value, combined
     // Use only lower byte of port address
     const port = addr & 0xFF;
-    console.log("portOut:", port, "value:", value);
+    // console.log("portOut:", port, "value:", value);
 
     if (port === 1) {
       // Port B: Display multiplex + buzzer
@@ -103,19 +103,19 @@ export const createTEC = (options = {}) => {
     } else if (port === 2) {
       // Port C: Display segment data
       portC = value & 0xFF;
-      console.log("portOut 2: portC=", portC.toString(16));
+      // console.log("portOut 2: portC=", portC.toString(16));
     }
 
     // Update display - must be called after BOTH port 1 and 2 are written
     // (matching old TEC-1 behavior)
-    console.log("Display update: portB=", portB.toString(16), "portC=", portC.toString(16));
+    // console.log("Display update: portB=", portB.toString(16), "portC=", portC.toString(16));
     if (portB & 0x01) displayState[5] = portC;
     if (portB & 0x02) displayState[4] = portC;
     if (portB & 0x04) displayState[3] = portC;
     if (portB & 0x08) displayState[2] = portC;
     if (portB & 0x10) displayState[1] = portC;
     if (portB & 0x20) displayState[0] = portC;
-    console.log("displayState:", displayState);
+    // console.log("displayState:", displayState);
   };
 
   const portIn = (addr, unused) => {
@@ -148,7 +148,7 @@ export const createTEC = (options = {}) => {
       else if (k.kbgo) result = 0x12;
       else if (k.kbad) result = 0x13;
       // Debug output
-      console.log("portIn 0: keys=", Object.keys(k), "->", result.toString(16));
+      // console.log("portIn 0: keys=", Object.keys(k), "->", result.toString(16));
       return result;
     }
 
