@@ -105,19 +105,31 @@ export const createTEC = (options = {}) => {
     } else if (port === 2) {
       // Port C: Display segment data
       portC = value & 0xFF;
-      if (dbgCounter % 1000 === 0) console.log("port 2 (segments):", portC.toString(16), "=", (portC >>> 0).toString(2).padStart(8,'0'));
+      // if (dbgCounter % 1000 === 0) console.log("port 2 (segments):", portC.toString(16));
     }
+
+    // Convert TEC-1 segment map to standard: A=01,B=08,C=20,D=80,E=40,F=02,G=04,dp=10 → a=1,b=2,c=4,d=8,e=16,f=32,g=64,dp=128
+    const mapSegments = (v) => {
+      let s = 0;
+      if (v & 0x01) s |= 0x01;  // A → a
+      if (v & 0x08) s |= 0x02;  // B → b
+      if (v & 0x20) s |= 0x04;  // C → c
+      if (v & 0x80) s |= 0x08;  // D → d
+      if (v & 0x40) s |= 0x10;  // E → e
+      if (v & 0x02) s |= 0x20;  // F → f
+      if (v & 0x04) s |= 0x40;  // G → g
+      if (v & 0x10) s |= 0x80;  // dp
+      return s;
+    };
 
     // Update display - must be called after BOTH port 1 and 2 are written
     // (matching old TEC-1 behavior)
-    // console.log("Display update: portB=", portB.toString(16), "portC=", portC.toString(16));
-    if (portB & 0x01) displayState[5] = portC;
-    if (portB & 0x02) displayState[4] = portC;
-    if (portB & 0x04) displayState[3] = portC;
-    if (portB & 0x08) displayState[2] = portC;
-    if (portB & 0x10) displayState[1] = portC;
-    if (portB & 0x20) displayState[0] = portC;
-    // console.log("displayState:", displayState);
+    if (portB & 0x01) displayState[5] = mapSegments(portC);
+    if (portB & 0x02) displayState[4] = mapSegments(portC);
+    if (portB & 0x04) displayState[3] = mapSegments(portC);
+    if (portB & 0x08) displayState[2] = mapSegments(portC);
+    if (portB & 0x10) displayState[1] = mapSegments(portC);
+    if (portB & 0x20) displayState[0] = mapSegments(portC);
   };
 
   const portIn = (addr, unused) => {
