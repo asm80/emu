@@ -156,6 +156,8 @@
 <!-- Controls -->
 <div id="controls">
   <button id="btn-reset" disabled>Reset</button>
+  <span id="debug-keys" style="font-size:0.7rem; color:#666; margin-left:20px;">Keys: </span>
+  <span id="debug-port" style="font-size:0.7rem; color:#666; margin-left:20px;">Port: </span>
 </div>
 
 <!-- Click-to-start overlay (AudioContext autoplay policy) -->
@@ -267,12 +269,14 @@
     if (!name) return;
     keyState[name] = true;
     setKeyVisual(name, true);
+    document.getElementById("debug-keys").textContent = "Keys: " + Object.keys(keyState).join(",");
   };
 
   const keyUp = (name) => {
     if (!name) return;
     delete keyState[name];
     setKeyVisual(name, false);
+    document.getElementById("debug-keys").textContent = "Keys: " + (Object.keys(keyState).length ? Object.keys(keyState).join(",") : "(none)");
   };
 
   window.addEventListener("keydown", (e) => {

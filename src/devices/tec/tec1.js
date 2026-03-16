@@ -81,7 +81,8 @@ export const createTEC = (options = {}) => {
 
   // ── Port I/O (8255 PPI) ───────────────────────────────────────────────
 
-  const portOut = (addr, value) => {
+  const portOut = (addr, value, unused) => {
+    // Z80 calls with 3 args: port, value, combined. Use only lower nibble.
     const port = addr & 0x0F;
 
     if (port === 1) {
@@ -97,49 +98,53 @@ export const createTEC = (options = {}) => {
         buzzer = newBuzzer;
       }
 
-      // Display digit select - bits 0-5 map to digits 5,4,3,2,1,0
-      // Active high: when bit is 1, that digit is selected
-      if (portB & 0x01) displayState[5] = portC;
-      if (portB & 0x02) displayState[4] = portC;
-      if (portB & 0x04) displayState[3] = portC;
-      if (portB & 0x08) displayState[2] = portC;
-      if (portB & 0x10) displayState[1] = portC;
-      if (portB & 0x20) displayState[0] = portC;
-
     } else if (port === 2) {
       // Port C: Display segment data
       portC = value & 0xFF;
     }
+
+    // Update display - must be called after BOTH port 1 and 2 are written
+    // (matching old TEC-1 behavior)
+    if (portB & 0x01) displayState[5] = portC;
+    if (portB & 0x02) displayState[4] = portC;
+    if (portB & 0x04) displayState[3] = portC;
+    if (portB & 0x08) displayState[2] = portC;
+    if (portB & 0x10) displayState[1] = portC;
+    if (portB & 0x20) displayState[0] = portC;
   };
 
-  const portIn = (addr) => {
+  const portIn = (addr, unused) => {
+    // Z80 calls with 2 args: port, combined. Use only lower nibble.
     const port = addr & 0x0F;
 
     if (port === 0) {
       // Port A: Keyboard input
       // Return key code or 0xFF if no key pressed
       const k = currentKeys;
-      if (k.kb0) return 0x00;
-      if (k.kb1) return 0x01;
-      if (k.kb2) return 0x02;
-      if (k.kb3) return 0x03;
-      if (k.kb4) return 0x04;
-      if (k.kb5) return 0x05;
-      if (k.kb6) return 0x06;
-      if (k.kb7) return 0x07;
-      if (k.kb8) return 0x08;
-      if (k.kb9) return 0x09;
-      if (k.kba) return 0x0A;
-      if (k.kbb) return 0x0B;
-      if (k.kbc) return 0x0C;
-      if (k.kbd) return 0x0D;
-      if (k.kbe) return 0x0E;
-      if (k.kbf) return 0x0F;
-      if (k.kbplus) return 0x10;
-      if (k.kbminus) return 0x11;
-      if (k.kbgo) return 0x12;
-      if (k.kbad) return 0x13;
-      return 0xFF;
+      let result = 0xFF;
+      if (k.kb0) result = 0x00;
+      else if (k.kb1) result = 0x01;
+      else if (k.kb2) result = 0x02;
+      else if (k.kb3) result = 0x03;
+      else if (k.kb4) result = 0x04;
+      else if (k.kb5) result = 0x05;
+      else if (k.kb6) result = 0x06;
+      else if (k.kb7) result = 0x07;
+      else if (k.kb8) result = 0x08;
+      else if (k.kb9) result = 0x09;
+      else if (k.kba) result = 0x0A;
+      else if (k.kbb) result = 0x0B;
+      else if (k.kbc) result = 0x0C;
+      else if (k.kbd) result = 0x0D;
+      else if (k.kbe) result = 0x0E;
+      else if (k.kbf) result = 0x0F;
+      else if (k.kbplus) result = 0x10;
+      else if (k.kbminus) result = 0x11;
+      else if (k.kbgo) result = 0x12;
+      else if (k.kbad) result = 0x13;
+      // Debug output
+      console.log("portIn 0: keys=", Object.keys(k), "->", result.toString(16));
+      return result;
     }
 
     return 0xFF;
