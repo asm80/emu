@@ -170,6 +170,7 @@ export const createTEC = (options = {}) => {
     const buffer = new Float32Array(numSamples);
 
     // Use current buzzer state for entire frame (simpler, less clicking)
+    console.log("generateAudio: buzzer=", buzzer);
     const level = buzzer ? 0.3 : 0;
     for (let i = 0; i < numSamples; i++) {
       buffer[i] = level;
