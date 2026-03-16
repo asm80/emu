@@ -103,16 +103,19 @@ export const createTEC = (options = {}) => {
     } else if (port === 2) {
       // Port C: Display segment data
       portC = value & 0xFF;
+      console.log("portOut 2: portC=", portC.toString(16));
     }
 
     // Update display - must be called after BOTH port 1 and 2 are written
     // (matching old TEC-1 behavior)
+    console.log("Display update: portB=", portB.toString(16), "portC=", portC.toString(16));
     if (portB & 0x01) displayState[5] = portC;
     if (portB & 0x02) displayState[4] = portC;
     if (portB & 0x04) displayState[3] = portC;
     if (portB & 0x08) displayState[2] = portC;
     if (portB & 0x10) displayState[1] = portC;
     if (portB & 0x20) displayState[0] = portC;
+    console.log("displayState:", displayState);
   };
 
   const portIn = (addr, unused) => {
