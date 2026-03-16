@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CP/M Emulator</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #111; color: #ccc; font-family: monospace; display: flex; flex-direction: column; height: 100vh; }
+    #toolbar {
+      display: flex; align-items: center; gap: 12px; padding: 6px 12px;
+      background: #222; border-bottom: 1px solid #444; flex-shrink: 0;
+    }
+    .led {
+      display: inline-block; padding: 2px 8px; border-radius: 3px;
+      background: #333; border: 1px solid #555; font-size: 12px; color: #888;
+      transition: background 0.1s, color 0.1s;
+    }
+    .led.active { background: #004400; color: #00ff00; border-color: #00aa00; }
+    button {
+      padding: 3px 10px; background: #444; color: #ccc; border: 1px solid #666;
+      border-radius: 3px; cursor: pointer; font-size: 12px;
+    }
+    button:hover { background: #555; }
+    label { font-size: 12px; color: #aaa; cursor: pointer; }
+    label input[type=file] { display: none; }
+    label span {
+      display: inline-block; padding: 3px 10px; background: #444; color: #ccc;
+      border: 1px solid #666; border-radius: 3px; cursor: pointer;
+    }
+    label span:hover { background: #555; }
+    #terminal { flex: 1; padding: 8px; overflow: hidden; }
+    .xterm { height: 100%; }
+    .xterm-viewport { overflow-y: hidden !important; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <span id="led-a" class="led">A:</span>
+    <span id="led-b" class="led">B:</span>
+    <button id="btn-reset">Reset</button>
+    <label><span>Insert A:</span><input type="file" id="file-a" accept=".cpm,.img,.imd,.dsk,.com"></label>
+    <label><span>Insert B:</span><input type="file" id="file-b" accept=".cpm,.img,.imd,.dsk,.com"></label>
+    <span style="margin-left:auto;font-size:11px;color:#666">CP/M 2.2 · Z80 3.5 MHz</span>
+  </div>
+  <div id="terminal"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <script type="module">
+    import { createCPM }                  from "./cpm.js";
+    import { createFloppy, DISK_PROFILES, detectProfile } from "../floppy/floppy.js";
+    import { BOOT_DISK }                  from "./cpm-rom.js";
+    import { fromIMD, fromDSK, fromRaw }  from "../floppy/disk-image.js";
+
+    // ── Terminal setup ──────────────────────────────────────────────────────────
+
+    const term = new Terminal({
+      cols: 80,
+      rows: 24,
+      cursorBlink: true,
+      theme: { background: "#111", foreground: "#00cc00", cursor: "#00ff00" },
+      fontFamily: "monospace",
+      fontSize: 14,
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById("terminal"));
+    fitAddon.fit();
+    window.addEventListener("resize", () => fitAddon.fit());
+
+    // ── Emulator setup ──────────────────────────────────────────────────────────
+
+    const FCPU = 3_500_000;
+    const cpm  = createCPM();
+
+    // Boot disk A: pre-loaded ROM disk image
+    cpm.insertDisk(0, createFloppy(BOOT_DISK, DISK_PROFILES["8SD"]));
+
+    // Empty disk B: 8SD format, filled with 0xE5
+    const emptyB = new Uint8Array(77 * 26 * 128).fill(0xE5);
+    cpm.insertDisk(1, createFloppy(emptyB, DISK_PROFILES["8SD"]));
+
+    cpm.reset();
+
+    // ── Keyboard input ──────────────────────────────────────────────────────────
+
+    term.onData((data) => {
+      for (const ch of data) {
+        cpm.sendKey(ch.charCodeAt(0));
+      }
+    });
+
+    // ── Disk file loading ───────────────────────────────────────────────────────
+
+    const loadDisk = async (file, driveIndex) => {
+      try {
+        const buf = new Uint8Array(await file.arrayBuffer());
+        let data, profile;
+
+        if (file.name.endsWith(".imd")) {
+          ({ data, profile } = fromIMD(buf));
+        } else if (file.name.endsWith(".dsk")) {
+          ({ data, profile } = fromDSK(buf));
+        } else {
+          data    = fromRaw(buf);
+          profile = detectProfile(buf);
+        }
+
+        if (!profile) {
+          term.write("\r\n\x1b[31mUnknown disk geometry — cannot determine format.\x1b[0m\r\n");
+          return;
+        }
+
+        cpm.insertDisk(driveIndex, createFloppy(data, profile));
+        const label = driveIndex === 0 ? "A:" : "B:";
+        term.write(`\r\n\x1b[32mDisk inserted in drive ${label} (${file.name})\x1b[0m\r\n`);
+      } catch (e) {
+        term.write(`\r\n\x1b[31mCannot read disk image: ${e.message}\x1b[0m\r\n`);
+      }
+    };
+
+    document.getElementById("file-a").addEventListener("change", (e) => {
+      if (e.target.files[0]) loadDisk(e.target.files[0], 0);
+    });
+    document.getElementById("file-b").addEventListener("change", (e) => {
+      if (e.target.files[0]) loadDisk(e.target.files[0], 1);
+    });
+
+    document.getElementById("btn-reset").addEventListener("click", () => {
+      cpm.reset();
+      term.clear();
+    });
+
+    // ── Animation loop ──────────────────────────────────────────────────────────
+
+    const ledA = document.getElementById("led-a");
+    const ledB = document.getElementById("led-b");
+    const tPerFrame = Math.floor(FCPU / 60);
+
+    const loop = () => {
+      const { initialized, output } = cpm.frame(tPerFrame);
+      if (initialized && output.length > 0) {
+        term.write(output);
+      }
+      const act = cpm.getDriveActivity();
+      ledA.className = "led" + (act[0] ? " active" : "");
+      ledB.className = "led" + (act[1] ? " active" : "");
+      requestAnimationFrame(loop);
+    };
+
+    loop();
+  </script>
+</body>
+</html>

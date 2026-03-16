@@ -22,6 +22,9 @@
       </select>
     </label>
     <input type="file" id="snfile" accept=".sna" title="Load .SNA snapshot">
+    <input type="file" id="tapefile" accept=".tap,.tzx" title="Load .TAP/.TZX tape">
+    <button id="btnPlay">▶ Play</button>
+    <button id="btnStop">■ Stop</button>
     <button id="btnReset">Reset</button>
     <span id="status">Ready — click Reset or load a .SNA to start audio</span>
   </div>
@@ -180,6 +183,37 @@
         }
       };
       reader.readAsArrayBuffer(file);
+    });
+
+    document.getElementById("tapefile").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file || !zxs) return;
+      initAudio();
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const data = new Uint8Array(ev.target.result);
+        try {
+          if (file.name.toLowerCase().endsWith(".tzx")) {
+            zxs.loadTZX(data);
+          } else {
+            zxs.loadTAP(data);
+          }
+          const { edgeCount } = zxs.tapeGetState();
+          statusEl.textContent = `Tape: ${edgeCount} edges loaded — press ▶ Play`;
+          zxs.tapePlay();
+        } catch (err) {
+          statusEl.textContent = `Tape error: ${err.message}`;
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    document.getElementById("btnPlay").addEventListener("click", () => {
+      if (zxs) zxs.tapePlay();
+    });
+
+    document.getElementById("btnStop").addEventListener("click", () => {
+      if (zxs) zxs.tapeStop();
     });
 
     // ── Main RAF loop ─────────────────────────────────────────────────────────

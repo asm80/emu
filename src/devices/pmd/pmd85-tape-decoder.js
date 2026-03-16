@@ -61,6 +61,7 @@ const findLeader = (buf, pos) => {
  * @param {Uint8Array} tape  raw tape bytes (the inner byte array from the .pmd JSON)
  * @returns {Array<{
  *   blkn : number,      file/block number
+ *   flag : number,      file type byte (0x3F = binary, 0x3E = BASIC, …)
  *   load : number,      load address (16-bit)
  *   dlen : number,      data length in bytes
  *   name : string,      8-char filename, trailing spaces trimmed
@@ -79,7 +80,7 @@ export const decodeMGF = (tape) => {
     if (pos + 15 > tape.length) break;
 
     const blkn = tape[pos];
-    // tape[pos+1] = 0x3F flag, not needed
+    const flag = tape[pos + 1];   // file type: 0x3F = binary, 0x3E = BASIC, etc.
     const load = tape[pos + 2] | (tape[pos + 3] << 8);
     const dlen = tape[pos + 4] | (tape[pos + 5] << 8);
     const name = new TextDecoder("ascii")
@@ -95,7 +96,7 @@ export const decodeMGF = (tape) => {
     const bytes = tape.slice(pos, end);
     pos = end;   // everything after data is ignored per format spec
 
-    blocks.push({ blkn, load, dlen, name, bytes });
+    blocks.push({ blkn, flag, load, dlen, name, bytes });
 
     // Only one block per leader sequence; remaining tape content is ignored
     break;

@@ -61,6 +61,173 @@ const ZX_PALETTE_RGBA = new Uint32Array(16);
   }
 })();
 
+// ── Tape constants ────────────────────────────────────────────────────────────
+
+const PILOT_PULSE     = 2168;
+const SYNC1_PULSE     = 667;
+const SYNC2_PULSE     = 735;
+const BIT0_PULSE      = 855;
+const BIT1_PULSE      = 1710;
+const PILOT_HEADER    = 8063;
+const PILOT_DATA      = 3223;
+const PAUSE_MS_TSTATES = 3500;  // T-states per millisecond at 3.5 MHz
+
+/**
+ * Convert a TAP file to a flat array of T-state edge durations.
+ *
+ * Each element is the number of T-states until the next signal edge.
+ * The signal toggles at each edge.
+ *
+ * @param {Uint8Array} data - Raw TAP file bytes
+ * @returns {Uint32Array} Edge duration array
+ */
+const parseTAPtoEdges = (data) => {
+  const edges = [];
+  let i = 0;
+  while (i + 2 <= data.length) {
+    const blockLen = data[i] | (data[i + 1] << 8);
+    i += 2;
+    if (blockLen === 0 || i + blockLen > data.length) break;
+    const isHeader = data[i] === 0x00;
+    const pilotLen = isHeader ? PILOT_HEADER : PILOT_DATA;
+    for (let p = 0; p < pilotLen; p++) edges.push(PILOT_PULSE);
+    edges.push(SYNC1_PULSE, SYNC2_PULSE);
+    for (let b = 0; b < blockLen; b++) {
+      const byte = data[i + b];
+      for (let bit = 7; bit >= 0; bit--) {
+        const pulse = (byte >> bit) & 1 ? BIT1_PULSE : BIT0_PULSE;
+        edges.push(pulse, pulse);
+      }
+    }
+    edges.push(3500000);  // inter-block pause (~1 second)
+    i += blockLen;
+  }
+  return new Uint32Array(edges);
+};
+
+/**
+ * Convert a TZX file to a flat array of T-state edge durations.
+ *
+ * Handles block types: 0x10 (standard), 0x11 (turbo), 0x12 (pure tone),
+ * 0x13 (pulse sequence), 0x14 (pure data), 0x20 (pause). Others are skipped.
+ *
+ * @param {Uint8Array} data - Raw TZX file bytes
+ * @returns {Uint32Array} Edge duration array
+ */
+const parseTZXtoEdges = (data) => {
+  // Validate header: "ZXTape!" + 0x1A
+  if (data.length < 10 || String.fromCharCode(...data.subarray(0, 7)) !== "ZXTape!" || data[7] !== 0x1A) {
+    return new Uint32Array(0);
+  }
+
+  const edges = [];
+  let i = 10;  // skip header (10 bytes)
+
+  const pushDataBits = (bytes, offset, count, bit0, bit1) => {
+    for (let b = 0; b < count; b++) {
+      const bitsInByte = (b === count - 1 && bytes._usedBits) ? bytes._usedBits : 8;
+      const byte = bytes[offset + b];
+      for (let bit = 7; bit >= 8 - bitsInByte; bit--) {
+        const pulse = (byte >> bit) & 1 ? bit1 : bit0;
+        edges.push(pulse, pulse);
+      }
+    }
+  };
+
+  while (i < data.length) {
+    const blockType = data[i++];
+
+    if (blockType === 0x10) {
+      // Standard speed data block
+      const pauseMs  = data[i] | (data[i + 1] << 8);
+      const dataLen  = data[i + 2] | (data[i + 3] << 8);
+      const isHeader = data[i + 4] === 0x00;
+      const pilotLen = isHeader ? PILOT_HEADER : PILOT_DATA;
+      for (let p = 0; p < pilotLen; p++) edges.push(PILOT_PULSE);
+      edges.push(SYNC1_PULSE, SYNC2_PULSE);
+      for (let b = 0; b < dataLen; b++) {
+        const byte = data[i + 4 + b];
+        for (let bit = 7; bit >= 0; bit--) {
+          const pulse = (byte >> bit) & 1 ? BIT1_PULSE : BIT0_PULSE;
+          edges.push(pulse, pulse);
+        }
+      }
+      if (pauseMs > 0) edges.push(pauseMs * PAUSE_MS_TSTATES);
+      i += 4 + dataLen;
+
+    } else if (blockType === 0x11) {
+      // Turbo speed data block
+      const pilotPulse = data[i] | (data[i + 1] << 8);
+      const sync1      = data[i + 2] | (data[i + 3] << 8);
+      const sync2      = data[i + 4] | (data[i + 5] << 8);
+      const bit0       = data[i + 6] | (data[i + 7] << 8);
+      const bit1       = data[i + 8] | (data[i + 9] << 8);
+      const pilotLen   = data[i + 10] | (data[i + 11] << 8);
+      const usedBits   = data[i + 12];
+      const pauseMs    = data[i + 13] | (data[i + 14] << 8);
+      const dataLen    = data[i + 15] | (data[i + 16] << 8) | (data[i + 17] << 16);
+      for (let p = 0; p < pilotLen; p++) edges.push(pilotPulse);
+      edges.push(sync1, sync2);
+      for (let b = 0; b < dataLen; b++) {
+        const bitsInByte = (b === dataLen - 1) ? usedBits : 8;
+        const byte = data[i + 18 + b];
+        for (let bit = 7; bit >= 8 - bitsInByte; bit--) {
+          const pulse = (byte >> bit) & 1 ? bit1 : bit0;
+          edges.push(pulse, pulse);
+        }
+      }
+      if (pauseMs > 0) edges.push(pauseMs * PAUSE_MS_TSTATES);
+      i += 18 + dataLen;
+
+    } else if (blockType === 0x12) {
+      // Pure tone
+      const pulse  = data[i] | (data[i + 1] << 8);
+      const count  = data[i + 2] | (data[i + 3] << 8);
+      for (let p = 0; p < count; p++) edges.push(pulse);
+      i += 4;
+
+    } else if (blockType === 0x13) {
+      // Pulse sequence
+      const count = data[i++];
+      for (let p = 0; p < count; p++) {
+        edges.push(data[i] | (data[i + 1] << 8));
+        i += 2;
+      }
+
+    } else if (blockType === 0x14) {
+      // Pure data block (no pilot/sync)
+      const bit0     = data[i] | (data[i + 1] << 8);
+      const bit1     = data[i + 2] | (data[i + 3] << 8);
+      const usedBits = data[i + 4];
+      const pauseMs  = data[i + 5] | (data[i + 6] << 8);
+      const dataLen  = data[i + 7] | (data[i + 8] << 8) | (data[i + 9] << 16);
+      for (let b = 0; b < dataLen; b++) {
+        const bitsInByte = (b === dataLen - 1) ? usedBits : 8;
+        const byte = data[i + 10 + b];
+        for (let bit = 7; bit >= 8 - bitsInByte; bit--) {
+          const pulse = (byte >> bit) & 1 ? bit1 : bit0;
+          edges.push(pulse, pulse);
+        }
+      }
+      if (pauseMs > 0) edges.push(pauseMs * PAUSE_MS_TSTATES);
+      i += 10 + dataLen;
+
+    } else if (blockType === 0x20) {
+      // Pause / stop the tape
+      const pauseMs = data[i] | (data[i + 1] << 8);
+      if (pauseMs > 0) edges.push(pauseMs * PAUSE_MS_TSTATES);
+      i += 2;
+
+    } else {
+      // Unknown block — skip via 4-byte length field (most TZX extension blocks)
+      const blockLen = data[i] | (data[i + 1] << 8) | (data[i + 2] << 16) | (data[i + 3] << 24);
+      i += 4 + (blockLen >>> 0);
+    }
+  }
+
+  return new Uint32Array(edges);
+};
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 /**
@@ -112,6 +279,20 @@ export const createZXS = (options = {}) => {
   let beeperEvents = [];
   /** cpu.T() at start of current frame. */
   let frameBaseT   = 0;
+
+  // ── Tape ──────────────────────────────────────────────────────────────────
+
+  /** Pre-computed T-state durations between signal edges. */
+  let tapeEdges   = new Uint32Array(0);
+  /** Current index into tapeEdges. */
+  let tapePos     = 0;
+  /** T-states remaining until the next edge transition. */
+  let tapeT       = 0;
+  /** Current EAR signal level: 0 or 1. */
+  let tapeSignal  = 0;
+  let tapePlaying = false;
+  /** cpu.T() value at the last tape advance — used for lazy per-IN advancement. */
+  let tapeTBase   = 0;
 
   // ── ULA / Border ──────────────────────────────────────────────────────────
 
@@ -188,7 +369,15 @@ export const createZXS = (options = {}) => {
         }
       }
       // Bits 0–4: key rows (active low: 0 = pressed), bit 6 = EAR input
-      return (0xBF & ~keys) | 0xE0;
+      // Advance tape lazily to the exact T-state of this IN instruction so the
+      // ROM loader sees signal edges at cycle-accurate positions.
+      if (tapePlaying) {
+        const elapsed = cpu.T() - tapeTBase;
+        if (elapsed > 0) advanceTape(elapsed);
+        tapeTBase = cpu.T();
+      }
+      const earBit = tapePlaying ? (tapeSignal << 6) : 0x40;
+      return (0xA0 | earBit | (~keys & 0x1F));
     }
 
     // AY register read (128k only)
@@ -298,6 +487,31 @@ export const createZXS = (options = {}) => {
     }
   };
 
+  // ── Tape playback ─────────────────────────────────────────────────────────
+
+  /**
+   * Advance tape playback by the given number of T-states,
+   * toggling tapeSignal at each edge boundary.
+   *
+   * @param {number} tStates - T-states elapsed this frame
+   */
+  const advanceTape = (tStates) => {
+    if (!tapePlaying || tapePos >= tapeEdges.length) return;
+    let rem = tStates;
+    while (rem > 0 && tapePos < tapeEdges.length) {
+      if (rem >= tapeT) {
+        rem -= tapeT;
+        tapeSignal ^= 1;
+        tapePos++;
+        tapeT = tapePos < tapeEdges.length ? tapeEdges[tapePos] : 0;
+      } else {
+        tapeT -= rem;
+        rem = 0;
+      }
+    }
+    if (tapePos >= tapeEdges.length) tapePlaying = false;
+  };
+
   // ── Audio generation ──────────────────────────────────────────────────────
 
   /**
@@ -342,6 +556,7 @@ export const createZXS = (options = {}) => {
       borderColor = 7; frameCount = 0;
       currentKeyMatrix = new Uint8Array(8);
       beeperState = 0; beeperStateAtFrameStart = 0; beeperEvents = []; frameBaseT = 0;
+      tapeEdges = new Uint32Array(0); tapePos = 0; tapeT = 0; tapeSignal = 0; tapePlaying = false; tapeTBase = 0;
       audioBuffer.fill(0); beeperBuf.fill(0);
       videoBuffer.fill(0);
       ay.reset();
@@ -363,6 +578,7 @@ export const createZXS = (options = {}) => {
       if (keyMatrix) currentKeyMatrix = keyMatrix;
 
       frameBaseT          = cpu.T();
+      tapeTBase           = cpu.T();
       beeperStateAtFrameStart = beeperState;
       beeperEvents        = [];
 
@@ -372,7 +588,8 @@ export const createZXS = (options = {}) => {
       const flashPhase = (frameCount >> 4) & 1;
 
       // Distribute tStates proportionally across VISIBLE_LINES, then retrace.
-      // This keeps correct per-scanline CPU/ULA timing for any tStates value.
+      // Tape is advanced lazily inside portIn at the exact T-state of each
+      // IN (0xFE) instruction, so no per-scanline advancement is needed here.
       let tDone = 0;
       for (let line = 0; line < VISIBLE_LINES; line++) {
         const lineTarget = Math.round(tStates * (line + 1) / SCANLINES);
@@ -384,6 +601,14 @@ export const createZXS = (options = {}) => {
       // Retrace lines (no rendering)
       const retraceT = tStates - tDone;
       if (retraceT > 0) cpu.steps(retraceT);
+
+      // Flush any remaining tape T-states not consumed by IN instructions
+      // (e.g. frames where the loader isn't actively sampling).
+      if (tapePlaying) {
+        const elapsed = cpu.T() - tapeTBase;
+        if (elapsed > 0) advanceTape(elapsed);
+        tapeTBase = cpu.T();
+      }
 
       // Generate beeper audio
       const numSamples = generateBeeper(tStates);
@@ -584,5 +809,62 @@ export const createZXS = (options = {}) => {
      * @returns {Uint8Array} Raw RGBA byte buffer
      */
     getVideoBuffer: () => videoBuffer,
+
+    /**
+     * Load a .TAP tape image and prepare it for playback.
+     * Does not auto-play — call tapePlay() to start.
+     *
+     * @param {Uint8Array} data - Raw TAP file bytes
+     */
+    loadTAP(data) {
+      tapeEdges   = parseTAPtoEdges(data);
+      tapePos     = 0;
+      tapeT       = tapeEdges.length > 0 ? tapeEdges[0] : 0;
+      tapeSignal  = 0;
+      tapePlaying = false;
+    },
+
+    /**
+     * Load a .TZX tape image and prepare it for playback.
+     * Does not auto-play — call tapePlay() to start.
+     *
+     * @param {Uint8Array} data - Raw TZX file bytes
+     */
+    loadTZX(data) {
+      tapeEdges   = parseTZXtoEdges(data);
+      tapePos     = 0;
+      tapeT       = tapeEdges.length > 0 ? tapeEdges[0] : 0;
+      tapeSignal  = 0;
+      tapePlaying = false;
+    },
+
+    /** Start or resume tape playback. */
+    tapePlay() {
+      if (tapeEdges.length > 0 && tapePos < tapeEdges.length) tapePlaying = true;
+    },
+
+    /** Pause tape playback without rewinding. */
+    tapePause() {
+      tapePlaying = false;
+    },
+
+    /** Stop tape playback and rewind to the beginning. */
+    tapeStop() {
+      tapePlaying = false;
+      tapePos     = 0;
+      tapeT       = tapeEdges.length > 0 ? tapeEdges[0] : 0;
+      tapeSignal  = 0;
+    },
+
+    /**
+     * Get current tape transport state.
+     *
+     * @returns {{ playing: boolean, edgeCount: number, edgesRemaining: number }}
+     */
+    tapeGetState: () => ({
+      playing:        tapePlaying,
+      edgeCount:      tapeEdges.length,
+      edgesRemaining: Math.max(0, tapeEdges.length - tapePos),
+    }),
   };
 };

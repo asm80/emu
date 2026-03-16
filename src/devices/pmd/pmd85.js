@@ -331,7 +331,39 @@ export const createPMD = (options = {}) => {
       soundEvents = [];
       cpu.steps(tStates);
       const audio = generateAudio(tStates);
-      return { initialized: true, audio, leds: { ...leds } };
+
+      // Compute time-weighted average brightness for each LED over the frame.
+      // soundEvents = [tOffset0, pcByte0, tOffset1, pcByte1, ...], sorted by T-state.
+      // Each interval [tPrev, tNext) contributes its duration to the LED that was
+      // active during that interval. Result is a float in [0, 1].
+      let ledR = 0;
+      let ledY = 0;
+      let tPrev = 0;
+      let rOn = false;
+      let yOn = false;
+      for (let i = 0; i < soundEvents.length; i += 2) {
+        const tNext = soundEvents[i];
+        const dt = tNext - tPrev;
+        if (rOn) ledR += dt;
+        if (yOn) ledY += dt;
+        const bits = soundEvents[i + 1];
+        rOn = (bits & 8) !== 0;
+        yOn = (bits & 7) !== 0;
+        tPrev = tNext;
+      }
+      // Accumulate the final interval from last event to end of frame
+      if (rOn) ledR += tStates - tPrev;
+      if (yOn) ledY += tStates - tPrev;
+
+      return {
+        initialized: true,
+        audio,
+        leds: {
+          r: tStates > 0 ? ledR / tStates : 0,
+          y: tStates > 0 ? ledY / tStates : 0,
+          g: 0,
+        },
+      };
     },
 
     /**

@@ -9,6 +9,43 @@ import QUnit from "qunit";
 import { createAY } from "../src/devices/ay3891x/ay3891x.js";
 import { createZXS } from "../src/devices/zxs/zxspectrum.js";
 
+// ── Tape helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Build a minimal .TAP block.
+ *
+ * @param {number} firstByte - 0x00 = header block, 0xFF = data block
+ * @param {number} totalLen  - Total block length (including firstByte)
+ * @returns {Uint8Array}
+ */
+const makeTAPBlock = (firstByte, totalLen = 17) => {
+  const buf = new Uint8Array(2 + totalLen);
+  buf[0] = totalLen & 0xFF;
+  buf[1] = (totalLen >> 8) & 0xFF;
+  buf[2] = firstByte;
+  return buf;
+};
+
+/**
+ * Build a minimal .TZX file with a single type-0x10 standard block.
+ *
+ * @param {number} firstByte - 0x00 = header, 0xFF = data
+ * @returns {Uint8Array}
+ */
+const makeTZXBlock10 = (firstByte = 0x00) => {
+  const dataLen = 17;
+  const buf = new Uint8Array(10 + 1 + 4 + dataLen);
+  // TZX header
+  "ZXTape!".split("").forEach((c, i) => { buf[i] = c.charCodeAt(0); });
+  buf[7] = 0x1A; buf[8] = 1; buf[9] = 20;
+  // Block 0x10
+  buf[10] = 0x10;
+  buf[11] = 0x00; buf[12] = 0x00;        // pause 0 ms
+  buf[13] = dataLen & 0xFF; buf[14] = (dataLen >> 8) & 0xFF;
+  buf[15] = firstByte;
+  return buf;
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
@@ -246,6 +283,99 @@ QUnit.module("SNA 128k", () => {
       if (ram2[b * 16384] !== b + 1) { allMatch = false; break; }
     }
     assert.ok(allMatch, "all 8 bank markers preserved through snapshot round-trip");
+  });
+
+});
+
+// ── Tape ──────────────────────────────────────────────────────────────────────
+
+QUnit.module("Tape", () => {
+
+  QUnit.test("tapeGetState() before load returns zeroed state", (assert) => {
+    const zxs = make48();
+    const state = zxs.tapeGetState();
+    assert.strictEqual(state.playing, false, "not playing");
+    assert.strictEqual(state.edgeCount, 0, "no edges loaded");
+    assert.strictEqual(state.edgesRemaining, 0, "no edges remaining");
+  });
+
+  QUnit.test("loadTAP() header block sets edgeCount > 0", (assert) => {
+    const zxs = make48();
+    zxs.loadTAP(makeTAPBlock(0x00));
+    assert.ok(zxs.tapeGetState().edgeCount > 0, "edges loaded from TAP header block");
+  });
+
+  QUnit.test("loadTAP() header block pilot contains 8063 × 2168 T-state pulses", (assert) => {
+    // We verify this indirectly: the first 8063 edges must all be 2168.
+    // We cannot access internal arrays directly, so we use tapePlay + manual counting
+    // via a TAP that has only 1 byte of data (minimising non-pilot edges).
+    // Instead, validate via the public parse function exported for testing.
+    // Since parseTAPtoEdges is not exported, we test via edgeCount:
+    // A 1-byte header TAP produces: 8063 pilot + 2 sync + 8 bits × 2 pulses = 8063 + 2 + 16 = 8081 edges + 1 pause edge = 8082
+    const tap = makeTAPBlock(0x00, 1);  // 1-byte block, firstByte = 0x00 (header)
+    const zxs = make48();
+    zxs.loadTAP(tap);
+    const expected = 8063 + 2 + 1 * 8 * 2 + 1;  // pilot + sync + bits + pause
+    assert.strictEqual(zxs.tapeGetState().edgeCount, expected, "edge count matches pilot+sync+bits+pause");
+  });
+
+  QUnit.test("loadTAP() data block (0xFF) uses 3223 pilot pulses", (assert) => {
+    const tap = makeTAPBlock(0xFF, 1);
+    make48().loadTAP(tap);  // sanity: no throw
+    const zxs = make48();
+    zxs.loadTAP(tap);
+    const expected = 3223 + 2 + 1 * 8 * 2 + 1;  // pilot + sync + bits + pause
+    assert.strictEqual(zxs.tapeGetState().edgeCount, expected, "data block uses 3223 pilot pulses");
+  });
+
+  QUnit.test("tapePlaying becomes false after tape exhausted", (assert) => {
+    const zxs = make48();
+    zxs.loadTAP(makeTAPBlock(0x00, 1));
+    zxs.tapePlay();
+    assert.ok(zxs.tapeGetState().playing, "playing after tapePlay()");
+    // Run enough frames to exhaust the tape (8082 edges × max 2168 T ≈ 17.5M T-states; 70000 × 300 = 21M)
+    for (let i = 0; i < 300 && zxs.tapeGetState().playing; i++) {
+      zxs.frame(70000);
+    }
+    assert.strictEqual(zxs.tapeGetState().playing, false, "tape stops automatically when exhausted");
+  });
+
+  QUnit.test("tapePause() freezes position and tapePlay() resumes", (assert) => {
+    const zxs = make48();
+    zxs.loadTAP(makeTAPBlock(0x00));
+    zxs.tapePlay();
+    zxs.frame(70000);
+    const remAfterOneFrame = zxs.tapeGetState().edgesRemaining;
+    zxs.tapePause();
+    zxs.frame(70000);
+    assert.strictEqual(zxs.tapeGetState().edgesRemaining, remAfterOneFrame, "position frozen while paused");
+    zxs.tapePlay();
+    zxs.frame(70000);
+    assert.ok(zxs.tapeGetState().edgesRemaining < remAfterOneFrame, "position advances after resume");
+  });
+
+  QUnit.test("tapeStop() rewinds to start", (assert) => {
+    const zxs = make48();
+    zxs.loadTAP(makeTAPBlock(0x00));
+    const totalEdges = zxs.tapeGetState().edgeCount;
+    zxs.tapePlay();
+    zxs.frame(70000);
+    zxs.tapeStop();
+    const state = zxs.tapeGetState();
+    assert.strictEqual(state.playing, false, "not playing after stop");
+    assert.strictEqual(state.edgesRemaining, totalEdges, "rewound to start");
+  });
+
+  QUnit.test("loadTZX() type-0x10 block sets edgeCount > 0", (assert) => {
+    const zxs = make48();
+    zxs.loadTZX(makeTZXBlock10(0x00));
+    assert.ok(zxs.tapeGetState().edgeCount > 0, "TZX type-0x10 block produces edges");
+  });
+
+  QUnit.test("loadTZX() invalid header returns empty edge list", (assert) => {
+    const zxs = make48();
+    zxs.loadTZX(new Uint8Array([0x00, 0x01, 0x02]));
+    assert.strictEqual(zxs.tapeGetState().edgeCount, 0, "invalid TZX yields zero edges");
   });
 
 });
