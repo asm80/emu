@@ -93,8 +93,8 @@ export const createTEC = (options = {}) => {
       // Port B: Display multiplex + buzzer
       portB = value & 0xFF;
 
-      // Bit 7 = buzzer (0 = on, 1 = off, inverted logic)
-      const newBuzzer = (value & 0x80) === 0;
+      // Bit 7 = buzzer (1 = on, 0 = off)
+      const newBuzzer = (value & 0x80) !== 0;
       if (newBuzzer !== buzzer) {
         if (cpu) {
           audioEvents.push([cpu.t, newBuzzer ? 1 : 0]);
