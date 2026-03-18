@@ -1,9 +1,26 @@
 /**
  * Hitachi HD6309 CPU Emulator
  *
- * ES6 module implementation of the HD6309 emulator, forked from MC6809.
- * The 6309 is a compatible superset of the 6809 with additional registers,
- * native execution mode, and ~80 new instructions.
+ * ES6 module implementation of the HD6309 CPU, forked from the MC6809 emulator.
+ * The HD6309 is a fully compatible hardware superset of the Motorola 6809 with:
+ *
+ * - New registers: E, F (8-bit accumulators), W=E:F (16-bit), Q=D:W (32-bit),
+ *   V (16-bit value register), MD (mode/status register)
+ * - Native execution mode (MD bit 0): reduced cycle counts and extended
+ *   interrupt stack (E and F pushed between B and DP)
+ * - FIRQ full-stack mode (MD bit 1): FIRQ saves full register set like IRQ
+ * - Hardware trap at vector $FFF0: triggered by illegal opcodes (MD bit 6)
+ *   or division by zero (MD bit 7)
+ * - ~80 new instructions across three opcode pages (page 0, $10, $11):
+ *   OIM/AIM/EIM/TIM, SEXW, LDQ, inter-register ops (ADDR/ADCR/SUBR...),
+ *   D/W register unary ops, W 16-bit arithmetic, TFM block transfer,
+ *   E/F register arithmetic, MULD/DIVD/DIVQ, bit manipulation (BAND etc.),
+ *   BITMD/LDMD, PSHSW/PULSW/PSHUW/PULUW
+ * - Extended TFR/EXG register encoding: W (0x6), V (0x7), zero (0xC/0xD),
+ *   E (0xE), F (0xF)
+ * - Six cycle tables: emulation and native mode for pages 0, $10, $11
+ *
+ * All 6809 instructions are fully supported; the 6309 is a drop-in replacement.
  *
  * @module 6309
  */
@@ -2946,6 +2963,20 @@ EXTENDED 7
 IMMEDIAT_16 8
 */
 
+/**
+ * Disassemble one instruction at the given byte sequence.
+ *
+ * Handles all three opcode pages (page 0, $10 prefix, $11 prefix) including
+ * all HD6309 extensions. Unknown/undefined opcodes return ["???", 1].
+ *
+ * @param {number} i   - First byte (opcode or prefix $10/$11)
+ * @param {number} a   - Second byte
+ * @param {number} b   - Third byte
+ * @param {number} c   - Fourth byte
+ * @param {number} d   - Fifth byte
+ * @param {number} pc  - Address of the instruction (for branch target calculation)
+ * @returns {[string, number]} Tuple of [mnemonic string, byte length]
+ */
 export const disasm = function (i, a, b, c, d, pc) {
     const toHexN = function (n, d) {
       let s = n.toString(16);
@@ -3410,6 +3441,24 @@ const flagsToString = () => {
   return f;
 };
 
+/**
+ * Create an HD6309 CPU instance.
+ *
+ * @param {object}   callbacks          - Memory and I/O interface
+ * @param {Function} callbacks.byteAt   - Read byte: (addr) => number
+ * @param {Function} callbacks.byteTo   - Write byte: (addr, value) => void
+ * @param {Function} [callbacks.ticks]  - Optional tick callback for peripherals
+ * @returns {object} CPU instance with the standard emulator API:
+ *   reset(), steps(n), singleStep(), run(), status(), interrupt(), nmi(),
+ *   set(reg, value), flagsToString(), disasm, T()
+ *
+ * @example
+ * const mem = new Uint8Array(65536);
+ * const cpu = CPU6309({ byteAt: a => mem[a], byteTo: (a, v) => { mem[a] = v; } });
+ * cpu.reset();
+ * cpu.steps(100);
+ * console.log(cpu.status().pc.toString(16));
+ */
 export default (callbacks) => {
   init(callbacks.byteTo, callbacks.byteAt, callbacks.ticks ?? null);
   return {
