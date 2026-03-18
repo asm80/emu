@@ -1919,7 +1919,8 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       mem[0x9000] = 0x02; // divisor = 2
       mem[0x1000] = 0x11; mem[0x1001] = 0xBD; mem[0x1002] = 0x90; mem[0x1003] = 0x00;
       cpu.singleStep();
-      assert.ok(true, "DIVD extended executed without crash");
+      assert.equal(cpu.status().f, 0x03, "quotient 3 in F");
+      assert.equal(cpu.status().b, 0x00, "remainder 0 in B");
     });
 
     QUnit.test("DIVQ immediate basic case ($11 $8E)", (assert) => {
@@ -1983,7 +1984,8 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       mem[0x0060] = 0x04; // divisor = 4
       mem[0x1000] = 0x11; mem[0x1001] = 0x9D; mem[0x1002] = 0x60;
       cpu.singleStep();
-      assert.ok(true, "DIVD direct executed without crash");
+      assert.equal(cpu.status().f, 0x02, "quotient 2 in F");
+      assert.equal(cpu.status().b, 0x00, "remainder 0 in B");
     });
 
     QUnit.test("DIVQ direct ($11 $9E)", (assert) => {
