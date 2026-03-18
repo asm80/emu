@@ -588,6 +588,166 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
     });
   });
 
+  QUnit.module("Page $11 Instructions", () => {
+    QUnit.module("MD Register Instructions", () => {
+      QUnit.test("LDMD switches to native mode", (assert) => {
+        const { cpu, mem } = createTestCPU();
+
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x3D; // LDMD
+        mem[0x1002] = 0x01; // native mode
+
+        cpu.singleStep();
+        assert.equal(cpu.status().md & 1, 1, "native mode enabled");
+      });
+
+      QUnit.test("BITMD clears MD bits 6 and 7 after test", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("MD", 0xC0); // bits 6 and 7 set
+
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x3C; // BITMD
+        mem[0x1002] = 0xC0; // test bits 6 and 7
+
+        cpu.singleStep();
+
+        assert.equal(cpu.status().md & 0xC0, 0, "MD bits 6 and 7 cleared");
+        assert.equal(cpu.status().flags & 4, 0, "Z clear (result non-zero)");
+      });
+
+      QUnit.test("BITMD sets Z when result is zero", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("MD", 0x00);
+
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x3C;
+        mem[0x1002] = 0xC0; // test bits 6 and 7
+
+        cpu.singleStep();
+        assert.ok(cpu.status().flags & 4, "Z set (MD & 0xC0 = 0)");
+      });
+    });
+
+    QUnit.module("E/F Register Operations", () => {
+      QUnit.test("LDE immediate: E = operand", (assert) => {
+        const { cpu, mem } = createTestCPU();
+
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x86; // LDE imm
+        mem[0x1002] = 0x42;
+
+        cpu.singleStep();
+        assert.equal(cpu.status().e, 0x42, "E = 0x42");
+      });
+
+      QUnit.test("STE direct: stores E to memory", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("E", 0xAB);
+        cpu.set("DP", 0x00);
+
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x97; // STE direct
+        mem[0x1002] = 0x50;
+
+        cpu.singleStep();
+        assert.equal(mem[0x0050], 0xAB, "E stored to memory");
+      });
+
+      QUnit.test("LDF immediate: F = operand", (assert) => {
+        const { cpu, mem } = createTestCPU();
+
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0xC6; // LDF imm
+        mem[0x1002] = 0x77;
+
+        cpu.singleStep();
+        assert.equal(cpu.status().f, 0x77, "F = 0x77");
+      });
+    });
+
+    QUnit.module("TFM Block Transfer", () => {
+      QUnit.test("TFM X+,Y+: transfers block from X to Y, both increment", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("X", 0x0100);
+        cpu.set("Y", 0x0200);
+        cpu.set("E", 0x00);
+        cpu.set("F", 0x03); // W = 3 bytes to transfer
+
+        mem[0x0100] = 0xAA;
+        mem[0x0101] = 0xBB;
+        mem[0x0102] = 0xCC;
+
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x38; // TFM X+,Y+
+        mem[0x1002] = 0x12; // X=1, Y=2
+
+        cpu.singleStep();
+
+        assert.equal(mem[0x0200], 0xAA, "byte 0 transferred");
+        assert.equal(mem[0x0201], 0xBB, "byte 1 transferred");
+        assert.equal(mem[0x0202], 0xCC, "byte 2 transferred");
+        assert.equal(cpu.status().x, 0x0103, "X incremented");
+        assert.equal(cpu.status().y, 0x0203, "Y incremented");
+        assert.equal(cpu.status().w, 0, "W = 0 after transfer");
+      });
+    });
+
+    QUnit.module("Bit Operations", () => {
+      QUnit.test("BAND: dest bit = dest bit AND src bit", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("A", 0xFF);   // A bit 3 = 1
+        cpu.set("DP", 0x00);
+        mem[0x0050] = 0xF7;  // mem bit 2 = 1 (bit 2 = 0b00000100... wait: 0xF7 = 1111 0111, bit 3 = 0)
+        mem[0x0050] = 0x08;  // mem bit 3 = 1 (0x08 = 0000 1000)
+
+        // BAND: postbyte: dstBit=3, srcBit=3, reg=A(0)
+        // postbyte = (3<<5)|(3<<2)|0 = 0x6C
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x30; // BAND
+        mem[0x1002] = 0x6C; // postbyte: dstBit=3, srcBit=3, reg=A
+        mem[0x1003] = 0x50; // direct addr
+
+        cpu.singleStep();
+        // A bit 3 (1) AND mem bit 3 (1) = 1 → A bit 3 remains 1
+        assert.equal((cpu.status().a >> 3) & 1, 1, "A bit 3 = 1 AND mem bit 3 = 1 → 1");
+      });
+    });
+
+    QUnit.module("MULD/DIVD/DIVQ", () => {
+      QUnit.test("MULD immediate: Q = D * operand (signed)", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("A", 0x00);
+        cpu.set("B", 0x05); // D = 5
+
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x8F; // MULD imm
+        mem[0x1002] = 0x00;
+        mem[0x1003] = 0x03; // 3
+
+        cpu.singleStep();
+        assert.equal(cpu.status().q, 15, "Q = 5 * 3 = 15");
+      });
+
+      QUnit.test("DIVD immediate: W=quotient, D=remainder", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("A", 0x00);
+        cpu.set("B", 0x0A); // D = 10
+
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x9D; // DIVD direct? No - check opcode
+        // Actually DIVD imm = $11 $8D
+        mem[0x1000] = 0x11;
+        mem[0x1001] = 0x8D; // DIVD imm
+        mem[0x1002] = 0x03; // divide by 3
+
+        cpu.singleStep();
+        // 10 / 3 = quotient 3, remainder 1
+        assert.equal(cpu.status().w, 3, "W = quotient = 3");
+        assert.equal(cpu.status().b, 1, "B = remainder = 1 (D = 0x0001)");
+      });
+    });
+  });
+
   QUnit.module("Trap System", () => {
     QUnit.test("Illegal opcode triggers trap via $FFF0 vector", (assert) => {
       const { cpu, mem } = createTestCPU();

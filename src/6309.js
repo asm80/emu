@@ -2313,7 +2313,175 @@ const step = () => {
             if (lo === 0xC) { oCMP16(rS, readVal()); return T - oldT; } // CMPS
           }
 
+          // E-register arithmetic ops ($11 $80-$BB)
+          if (opcode >= 0x80 && opcode <= 0xBB) {
+            const lo = opcode & 0xF;
+            const mode = (opcode >> 4) & 3;
+            if (lo <= 0xB && lo !== 3 && lo !== 6 && lo !== 7) {
+              const val = mode === 0 ? fetch()
+                        : mode === 1 ? byteAt(dpadd())
+                        : mode === 2 ? byteAt(PostByte())
+                        : byteAt(fetch16());
+              if (lo === 1) { oSUB(rE, val); }      // CMPE (flags only)
+              else if (lo === 0) rE = oSUB(rE, val); // SUBE
+              else if (lo === 0xB) rE = oADD(rE, val); // ADDE
+              else if (lo === 0x8) rE = oSUB(rE, val); // ??? skip
+            } else if (lo === 6) { // LDE
+              rE = mode === 0 ? fetch() : mode === 1 ? byteAt(dpadd()) : mode === 2 ? byteAt(PostByte()) : byteAt(fetch16());
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              CC |= flagsNZ[rE];
+            } else if (lo === 7 && mode !== 0) { // STE
+              addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
+              byteTo(addr, rE);
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              CC |= flagsNZ[rE];
+            }
+            return T - oldT;
+          }
+
+          // F-register arithmetic ops ($11 $C0-$CB)
+          if (opcode >= 0xC0 && opcode <= 0xCB) {
+            const lo = opcode & 0xF;
+            const mode = (opcode >> 4) & 3;
+            if (lo === 6) { // LDF
+              rF = mode === 0 ? fetch() : mode === 1 ? byteAt(dpadd()) : mode === 2 ? byteAt(PostByte()) : byteAt(fetch16());
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              CC |= flagsNZ[rF];
+            } else if (lo === 0) rF = oSUB(rF, mode === 0 ? fetch() : byteAt(mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16())); // SUBF
+            else if (lo === 1) oSUB(rF, mode === 0 ? fetch() : byteAt(mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16()));         // CMPF
+            else if (lo === 0xB) rF = oADD(rF, mode === 0 ? fetch() : byteAt(mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16())); // ADDF
+            return T - oldT;
+          }
+          if (opcode >= 0xD7 && opcode <= 0xFF && (opcode & 0xF) === 7) { // STF
+            const mode11f = (opcode >> 4) & 3;
+            addr = mode11f === 1 ? dpadd() : mode11f === 2 ? PostByte() : fetch16();
+            byteTo(addr, rF);
+            CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+            CC |= flagsNZ[rF];
+            return T - oldT;
+          }
+
           switch (opcode) {
+            case 0x30: case 0x31: case 0x32: case 0x33:
+            case 0x34: case 0x35: case 0x36: case 0x37: {
+              // Bit operations (DIRECT mode, special postbyte)
+              const bpb = fetch();
+              const baddr = (DP << 8) | fetch();
+              const dstBit = (bpb >> 5) & 0x7;
+              const srcBit = (bpb >> 2) & 0x7;
+              const regCode = bpb & 0x3;
+              const getR = () => regCode === 0 ? rA : regCode === 1 ? rB : CC;
+              const setR = (v) => {
+                if (regCode === 0) rA = v & 0xFF;
+                else if (regCode === 1) rB = v & 0xFF;
+                else CC = v & 0xFF;
+              };
+              const memBit = (byteAt(baddr) >> srcBit) & 1;
+              const regVal = getR();
+              const regBit = (regVal >> dstBit) & 1;
+              let newBit;
+              const bop = opcode & 0x7;
+              if (bop === 0) newBit = regBit & memBit;
+              else if (bop === 1) newBit = regBit & (~memBit & 1);
+              else if (bop === 2) newBit = regBit | memBit;
+              else if (bop === 3) newBit = regBit | (~memBit & 1);
+              else if (bop === 4) newBit = regBit ^ memBit;
+              else if (bop === 5) newBit = regBit ^ (~memBit & 1);
+              else if (bop === 6) newBit = memBit;
+              else {  // STBT
+                const memVal = byteAt(baddr);
+                byteTo(baddr, (memVal & ~(1 << dstBit)) | (regBit << dstBit));
+                break;
+              }
+              if (bop !== 7) setR((regVal & ~(1 << dstBit)) | (newBit << dstBit));
+              break;
+            }
+
+            case 0x38: case 0x39: case 0x3A: case 0x3B: {
+              // TFM block transfer
+              const tfmpb = fetch();
+              const tfmSrcReg = tfmpb >> 4;
+              const tfmDstReg = tfmpb & 0x0F;
+              let tfmSrc = getPBR(tfmSrcReg);
+              let tfmDst = getPBR(tfmDstReg);
+              let tfmCount = getW();
+              const tfmMode = opcode & 0x3; // 0=r+r+, 1=r-r-, 2=r+r, 3=rr+
+              const originalCount = tfmCount;
+              while (tfmCount > 0) {
+                byteTo(tfmDst, byteAt(tfmSrc));
+                if (tfmMode === 0) { tfmSrc = (tfmSrc + 1) & 0xFFFF; tfmDst = (tfmDst + 1) & 0xFFFF; }
+                else if (tfmMode === 1) { tfmSrc = (tfmSrc - 1) & 0xFFFF; tfmDst = (tfmDst - 1) & 0xFFFF; }
+                else if (tfmMode === 2) { tfmSrc = (tfmSrc + 1) & 0xFFFF; }
+                else { tfmDst = (tfmDst + 1) & 0xFFFF; }
+                tfmCount--;
+              }
+              setPBR(tfmSrcReg, tfmSrc);
+              setPBR(tfmDstReg, tfmDst);
+              setW(0);
+              T += 6 + 3 * originalCount;
+              break;
+            }
+
+            case 0x3C: { // BITMD #n: AND MD with n, set Z/N flags, clear bits 6 and 7
+              const bitmdn = fetch();
+              const bitmdR = rMD & bitmdn;
+              CC &= ~(F_ZERO | F_NEGATIVE);
+              if (bitmdR === 0) CC |= F_ZERO;
+              if (bitmdR & 0x80) CC |= F_NEGATIVE;
+              rMD &= ~0xC0;
+              break;
+            }
+            case 0x3D: { // LDMD #n: load n into MD bits 0 and 1
+              const ldmdn = fetch();
+              rMD = (rMD & ~0x03) | (ldmdn & 0x03);
+              break;
+            }
+
+            // E-register unary ops
+            case 0x43: rE = (~rE) & 0xFF; CC |= flagsNZ[rE]; CC |= F_CARRY; CC &= ~F_OVERFLOW; break; // COME
+            case 0x4A: rE = (rE - 1) & 0xFF; CC &= ~(F_ZERO|F_NEGATIVE|F_OVERFLOW); CC |= flagsNZ[rE]; if (rE === 0x7F) CC |= F_OVERFLOW; break; // DECE
+            case 0x4C: rE = (rE + 1) & 0xFF; CC &= ~(F_ZERO|F_NEGATIVE|F_OVERFLOW); CC |= flagsNZ[rE]; if (rE === 0x80) CC |= F_OVERFLOW; break; // INCE
+            case 0x4D: CC &= ~(F_ZERO|F_NEGATIVE|F_OVERFLOW); CC |= flagsNZ[rE]; break; // TSTE
+            case 0x4F: rE = 0; CC &= ~(F_NEGATIVE|F_OVERFLOW|F_CARRY); CC |= F_ZERO; break; // CLRE
+
+            // F-register unary ops
+            case 0x53: rF = (~rF) & 0xFF; CC |= flagsNZ[rF]; CC |= F_CARRY; CC &= ~F_OVERFLOW; break; // COMF
+            case 0x5A: rF = (rF - 1) & 0xFF; CC &= ~(F_ZERO|F_NEGATIVE|F_OVERFLOW); CC |= flagsNZ[rF]; if (rF === 0x7F) CC |= F_OVERFLOW; break; // DECF
+            case 0x5C: rF = (rF + 1) & 0xFF; CC &= ~(F_ZERO|F_NEGATIVE|F_OVERFLOW); CC |= flagsNZ[rF]; if (rF === 0x80) CC |= F_OVERFLOW; break; // INCF
+            case 0x5D: CC &= ~(F_ZERO|F_NEGATIVE|F_OVERFLOW); CC |= flagsNZ[rF]; break; // TSTF
+            case 0x5F: rF = 0; CC &= ~(F_NEGATIVE|F_OVERFLOW|F_CARRY); CC |= F_ZERO; break; // CLRF
+
+            // MULD/DIVD/DIVQ
+            case 0x8F: case 0x9F: case 0xAF: case 0xBF: { // MULD
+              const muld_op = opcode === 0x8F ? fetch16() : opcode === 0x9F ? ReadWord(dpadd()) : opcode === 0xAF ? ReadWord(PostByte()) : ReadWord(fetch16());
+              const muld_d = signed16(getD());
+              const muld_r = (muld_d * signed16(muld_op)) | 0;
+              setQ(muld_r >>> 0);
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              if (muld_r === 0) CC |= F_ZERO;
+              if (muld_r < 0) CC |= F_NEGATIVE;
+              break;
+            }
+            case 0x8D: case 0x9D: case 0xAD: case 0xBD: { // DIVD: D / 8-bit
+              const divd_op = opcode === 0x8D ? fetch() : opcode === 0x9D ? byteAt(dpadd()) : opcode === 0xAD ? byteAt(PostByte()) : byteAt(fetch16());
+              if (divd_op === 0) { trap(0x80); break; }
+              const divd_d = signed16(getD());
+              const divd_s = signed(divd_op);
+              setW(Math.trunc(divd_d / divd_s) & 0xFFFF);
+              setD(((divd_d % divd_s) & 0xFFFF));
+              break;
+            }
+            case 0x8E: case 0x9E: case 0xAE: case 0xBE: { // DIVQ: Q / 16-bit
+              const divq_op = opcode === 0x8E ? fetch16() : opcode === 0x9E ? ReadWord(dpadd()) : opcode === 0xAE ? ReadWord(PostByte()) : ReadWord(fetch16());
+              if (divq_op === 0) { trap(0x80); break; }
+              const divq_q = getQ();
+              const divq_sq = divq_q > 0x7FFFFFFF ? divq_q - 0x100000000 : divq_q;
+              const divq_s = signed16(divq_op);
+              setW(Math.trunc(divq_sq / divq_s) & 0xFFFF);
+              setD((divq_sq % divq_s) & 0xFFFF);
+              break;
+            }
+
             case 0x3f: //SWI3
               CC |= F_ENTIRE;
               PUSHW(PC);
