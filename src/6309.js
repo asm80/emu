@@ -584,6 +584,28 @@ let cycles2 = [
     7,
   ]; /* F0-FF */
 
+// Native mode cycles for $10 prefix (parenthesized values from 6309.txt section 6)
+const cyclesNative2 = (() => {
+  const a = Array.from(cycles2);
+  a[0x3F] = 22; // SWI2: native stack has 2 extra bytes
+  // D-register unary ops: 3 → 2
+  [0x40,0x43,0x44,0x46,0x47,0x48,0x49,0x4A,0x4C,0x4D,0x4F].forEach(i => { if (a[i]) a[i] = 2; });
+  // W-register unary ops: 3 → 2
+  [0x53,0x54,0x56,0x59,0x5A,0x5C,0x5D,0x5F].forEach(i => { if (a[i]) a[i] = 2; });
+  // W arithmetic imm (5 → 4) and dp (7 → 6) and ext (8 → 7)
+  [0x80,0x81,0x82,0x84,0x85,0x86,0x88,0x89,0x8A,0x8B].forEach(i => { if (a[i] === 5) a[i] = 4; });
+  [0x90,0x91,0x92,0x94,0x95,0x96,0x98,0x99,0x9A,0x9B].forEach(i => { if (a[i] === 7) a[i] = 6; });
+  [0xB0,0xB1,0xB2,0xB4,0xB5,0xB6,0xB8,0xB9,0xBA,0xBB].forEach(i => { if (a[i] === 8) a[i] = 7; });
+  return a;
+})();
+
+// Native mode cycles for $11 prefix
+const cyclesNative3 = (() => {
+  const a = Array.from(cycles2);
+  a[0x3F] = 22; // SWI3: native stack has 2 extra bytes
+  return a;
+})();
+
   /* Negative and zero flags for quicker flag settings */
 let flagsNZ = [
     4,
@@ -1982,7 +2004,7 @@ const step = () => {
       case 0x10: //page 1
         {
           opcode = fetch();
-          T += cycles2[opcode];
+          T += isNative() ? cyclesNative2[opcode] : cycles2[opcode];
 
           // Dispatch 16-bit register ops in page 1 prefix
           if (opcode >= 0x80) {
@@ -2295,7 +2317,7 @@ const step = () => {
       case 0x11: //page 2
         {
           opcode = fetch();
-          T += cycles2[opcode];
+          T += isNative() ? cyclesNative3[opcode] : cycles2[opcode];
 
           // Dispatch 16-bit compare ops in page 2 prefix
           if (opcode >= 0x80) {
