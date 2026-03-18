@@ -1208,4 +1208,120 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.equal(cpu.status().y, 0x2001, "Y incremented");
     });
   });
+
+  QUnit.module("$10 prefix: LDY/STY/LDS/STS/CMPY/CMPD", () => {
+    QUnit.test("LDY immediate ($10 $8E)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x10; mem[0x1001] = 0x8E; mem[0x1002] = 0x12; mem[0x1003] = 0x34;
+      cpu.singleStep();
+      assert.equal(cpu.status().y, 0x1234, "Y = 0x1234 after LDY #$1234");
+      assert.equal(cpu.status().flags & 0x04, 0, "Z flag clear");
+    });
+
+    QUnit.test("LDY immediate sets Z flag for zero", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x10; mem[0x1001] = 0x8E; mem[0x1002] = 0x00; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal(cpu.status().y, 0, "Y = 0");
+      assert.ok(cpu.status().flags & 0x04, "Z flag set");
+    });
+
+    QUnit.test("LDY direct ($10 $9E)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("DP", 0x05); mem[0x0510] = 0xAB; mem[0x0511] = 0xCD;
+      mem[0x1000] = 0x10; mem[0x1001] = 0x9E; mem[0x1002] = 0x10;
+      cpu.singleStep();
+      assert.equal(cpu.status().y, 0xABCD, "Y loaded from direct page");
+    });
+
+    QUnit.test("LDY extended ($10 $BE)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x3000] = 0x56; mem[0x3001] = 0x78;
+      mem[0x1000] = 0x10; mem[0x1001] = 0xBE; mem[0x1002] = 0x30; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal(cpu.status().y, 0x5678, "Y loaded from extended address");
+    });
+
+    QUnit.test("STY direct ($10 $9F)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("Y", 0x1234); cpu.set("DP", 0x05);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x9F; mem[0x1002] = 0x20;
+      cpu.singleStep();
+      assert.equal(mem[0x0520], 0x12, "Y high byte stored");
+      assert.equal(mem[0x0521], 0x34, "Y low byte stored");
+    });
+
+    QUnit.test("STY extended ($10 $BF)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("Y", 0x9ABC);
+      mem[0x1000] = 0x10; mem[0x1001] = 0xBF; mem[0x1002] = 0x40; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal((mem[0x4000] << 8) | mem[0x4001], 0x9ABC, "Y stored at extended address");
+    });
+
+    QUnit.test("LDS immediate ($10 $CE)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x10; mem[0x1001] = 0xCE; mem[0x1002] = 0x03; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal(cpu.status().sp, 0x0300, "S = 0x0300 after LDS #$0300");
+    });
+
+    QUnit.test("LDS direct ($10 $DE)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("DP", 0x00); mem[0x0050] = 0x02; mem[0x0051] = 0x00;
+      mem[0x1000] = 0x10; mem[0x1001] = 0xDE; mem[0x1002] = 0x50;
+      cpu.singleStep();
+      assert.equal(cpu.status().sp, 0x0200, "S loaded from direct page");
+    });
+
+    QUnit.test("LDS extended ($10 $FE)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x5000] = 0x01; mem[0x5001] = 0xFF;
+      mem[0x1000] = 0x10; mem[0x1001] = 0xFE; mem[0x1002] = 0x50; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal(cpu.status().sp, 0x01FF, "S loaded from extended address");
+    });
+
+    QUnit.test("STS extended ($10 $FF)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x10; mem[0x1001] = 0xFF; mem[0x1002] = 0x60; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal((mem[0x6000] << 8) | mem[0x6001], 0x0200, "S stored at extended address");
+    });
+
+    QUnit.test("CMPY immediate ($10 $8C) sets Z on equal", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("Y", 0x1234);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x8C; mem[0x1002] = 0x12; mem[0x1003] = 0x34;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z flag set when Y = operand");
+    });
+
+    QUnit.test("CMPY extended ($10 $BC) sets N on Y < operand", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("Y", 0x0100);
+      mem[0x7000] = 0x02; mem[0x7001] = 0x00;
+      mem[0x1000] = 0x10; mem[0x1001] = 0xBC; mem[0x1002] = 0x70; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x08, "N flag set when Y < operand");
+    });
+
+    QUnit.test("CMPD immediate ($10 $83) sets Z on equal", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x12); cpu.set("B", 0x34); // D = 0x1234
+      mem[0x1000] = 0x10; mem[0x1001] = 0x83; mem[0x1002] = 0x12; mem[0x1003] = 0x34;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z flag set when D = operand");
+    });
+
+    QUnit.test("CMPD extended ($10 $B3) compares D with memory", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x05); // D = 0x0005
+      mem[0x8000] = 0x00; mem[0x8001] = 0x05;
+      mem[0x1000] = 0x10; mem[0x1001] = 0xB3; mem[0x1002] = 0x80; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z flag set when D = memory");
+    });
+  });
 });
