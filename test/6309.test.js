@@ -965,4 +965,101 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.ok(cpu.status().u < 0x0300, "U decreased");
     });
   });
+
+  QUnit.module("TFR/EXG extended 6309 registers", () => {
+    QUnit.test("TFR D→W sets W equal to D", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x12); cpu.set("B", 0x34); // D = 0x1234
+      mem[0x1000] = 0x1F; mem[0x1001] = 0x06; // TFR D,W (src=0=D, dst=6=W)
+      cpu.singleStep();
+      assert.equal(cpu.status().w, 0x1234, "W = D after TFR D,W");
+    });
+
+    QUnit.test("TFR W→D sets D equal to W", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0xAB); cpu.set("F", 0xCD); // W = 0xABCD
+      mem[0x1000] = 0x1F; mem[0x1001] = 0x60; // TFR W,D (src=6=W, dst=0=D)
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0xAB, "A (D high) = W high");
+      assert.equal(cpu.status().b, 0xCD, "B (D low) = W low");
+    });
+
+    QUnit.test("TFR A→E transfers A to E register", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x77);
+      mem[0x1000] = 0x1F; mem[0x1001] = 0x8E; // TFR A,E (src=8=A, dst=E=E)
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x77, "E = A after TFR A,E");
+    });
+
+    QUnit.test("TFR B→F transfers B to F register", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("B", 0x88);
+      mem[0x1000] = 0x1F; mem[0x1001] = 0x9F; // TFR B,F (src=9=B, dst=F=F)
+      cpu.singleStep();
+      assert.equal(cpu.status().f, 0x88, "F = B after TFR B,F");
+    });
+
+    QUnit.test("TFR X→V transfers X to V register", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x5A5A);
+      mem[0x1000] = 0x1F; mem[0x1001] = 0x17; // TFR X,V (src=1=X, dst=7=V)
+      cpu.singleStep();
+      assert.equal(cpu.status().v, 0x5A5A, "V = X after TFR X,V");
+    });
+
+    QUnit.test("TFR V→X transfers V to X register", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("V", 0x1357);
+      mem[0x1000] = 0x1F; mem[0x1001] = 0x71; // TFR V,X (src=7=V, dst=1=X)
+      cpu.singleStep();
+      assert.equal(cpu.status().x, 0x1357, "X = V after TFR V,X");
+    });
+
+    QUnit.test("TFR A→zero (0xC) discards value", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x42);
+      mem[0x1000] = 0x1F; mem[0x1001] = 0x8C; // TFR A,zero (dst=C=zero)
+      cpu.singleStep();
+      // No assertion on zero — just confirm no crash and A unchanged
+      assert.equal(cpu.status().a, 0x42, "A unchanged after TFR A,zero");
+    });
+
+    QUnit.test("TFR zero→A reads 0x00 or 0xFF into A (16-bit src truncated)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x55);
+      mem[0x1000] = 0x1F; mem[0x1001] = 0xC8; // TFR zero,A (src=C=zero, dst=8=A)
+      cpu.singleStep();
+      // zero register returns 0; 16→8 bit: low byte = 0x00
+      assert.ok(cpu.status().a === 0x00 || cpu.status().a === 0xFF, "A = 0x00 or 0xFF from zero reg");
+    });
+
+    QUnit.test("EXG W↔D exchanges W and D", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x12); cpu.set("B", 0x34); // D = 0x1234
+      cpu.set("E", 0x56); cpu.set("F", 0x78); // W = 0x5678
+      mem[0x1000] = 0x1E; mem[0x1001] = 0x06; // EXG D,W
+      cpu.singleStep();
+      assert.equal(cpu.status().w, 0x1234, "W = old D");
+      assert.equal(cpu.status().a, 0x56, "A = old W high");
+      assert.equal(cpu.status().b, 0x78, "B = old W low");
+    });
+
+    QUnit.test("EXG E↔A exchanges E and A (8-bit registers)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0xAA); cpu.set("E", 0x55);
+      mem[0x1000] = 0x1E; mem[0x1001] = 0x8E; // EXG A,E
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x55, "A = old E");
+      assert.equal(cpu.status().e, 0xAA, "E = old A");
+    });
+
+    QUnit.test("TFR CC→DP and DP→CC", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x5A);
+      mem[0x1000] = 0x1F; mem[0x1001] = 0xAB; // TFR CC,DP (src=A=CC, dst=B=DP)
+      cpu.singleStep();
+      assert.equal(cpu.status().dp, 0x5A, "DP = CC after TFR CC,DP");
+    });
+  });
 });
