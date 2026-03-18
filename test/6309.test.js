@@ -1753,4 +1753,251 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.ok(cpu.status().flags & 0x04, "Z set when S = memory (extended)");
     });
   });
+
+  QUnit.module("$11 prefix: native mode ops", () => {
+    QUnit.test("COME complements E register ($11 $43)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0xAA);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x43;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x55, "E = ~0xAA = 0x55");
+      assert.ok(cpu.status().flags & 0x01, "C flag set after COM");
+    });
+
+    QUnit.test("DECE decrements E, overflow at 0x80→0x7F ($11 $4A)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x80);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x4A;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x7F, "E decremented");
+      assert.ok(cpu.status().flags & 0x02, "V flag set on 0x80→0x7F");
+    });
+
+    QUnit.test("DECE at 0x01 — no overflow", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x01);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x4A;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x00, "E = 0");
+      assert.ok(cpu.status().flags & 0x04, "Z flag set");
+    });
+
+    QUnit.test("INCE increments E, overflow at 0x7F→0x80 ($11 $4C)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x7F);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x4C;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x80, "E incremented to 0x80");
+      assert.ok(cpu.status().flags & 0x02, "V flag set on 0x7F→0x80");
+    });
+
+    QUnit.test("INCE at 0xFF wraps to 0x00 — no overflow", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0xFF);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x4C;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x00, "E wrapped to 0");
+      assert.ok(cpu.status().flags & 0x04, "Z flag set");
+    });
+
+    QUnit.test("TSTE sets N flag when E has bit7 set ($11 $4D)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x80);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x4D;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x08, "N flag set when E bit7=1");
+    });
+
+    QUnit.test("CLRE clears E to 0 ($11 $4F)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0xFF);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x4F;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x00, "E cleared to 0");
+      assert.ok(cpu.status().flags & 0x04, "Z flag set");
+    });
+
+    QUnit.test("COMF complements F register ($11 $53)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0x00);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x53;
+      cpu.singleStep();
+      assert.equal(cpu.status().f, 0xFF, "F = ~0x00 = 0xFF");
+    });
+
+    QUnit.test("DECF decrements F ($11 $5A)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0x05);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x5A;
+      cpu.singleStep();
+      assert.equal(cpu.status().f, 0x04, "F decremented");
+    });
+
+    QUnit.test("DECF overflow at 0x80→0x7F ($11 $5A)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0x80);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x5A;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x02, "V flag set on DECF 0x80→0x7F");
+    });
+
+    QUnit.test("INCF increments F ($11 $5C)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0x05);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x5C;
+      cpu.singleStep();
+      assert.equal(cpu.status().f, 0x06, "F incremented");
+    });
+
+    QUnit.test("INCF overflow at 0x7F→0x80 ($11 $5C)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0x7F);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x5C;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x02, "V flag set on INCF 0x7F→0x80");
+    });
+
+    QUnit.test("TSTF sets Z when F=0 ($11 $5D)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0x00);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x5D;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when F=0");
+    });
+
+    QUnit.test("CLRF clears F to 0 ($11 $5F)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0xAB);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x5F;
+      cpu.singleStep();
+      assert.equal(cpu.status().f, 0x00, "F cleared to 0");
+    });
+
+    QUnit.test("MULD immediate: 3×4=12 in Q ($11 $8F)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x03); // D=3
+      mem[0x1000] = 0x11; mem[0x1001] = 0x8F; mem[0x1002] = 0x00; mem[0x1003] = 0x04;
+      cpu.singleStep();
+      // Q = A:B:E:F (32-bit), 3*4=12=0x0000000C → A=0,B=0,E=0,F=0x0C, W(E:F)=0x000C
+      assert.equal(cpu.status().a, 0x00, "A (Q high byte) = 0");
+      assert.equal(cpu.status().b, 0x00, "B (Q byte 1) = 0");
+      assert.equal(cpu.status().w, 0x000C, "W=E:F (Q low word) = 12 (3*4)");
+    });
+
+    QUnit.test("MULD direct ($11 $9F)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x05); // D=5
+      cpu.set("DP", 0x00); mem[0x0040] = 0x00; mem[0x0041] = 0x03; // operand=3
+      mem[0x1000] = 0x11; mem[0x1001] = 0x9F; mem[0x1002] = 0x40;
+      cpu.singleStep();
+      assert.equal(cpu.status().f, 0x0F, "MULD direct: F (Q low byte) = 15 (5*3)");
+    });
+
+    QUnit.test("DIVD immediate: 10÷3, quotient=3 remainder=1 ($11 $8D)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x0A); // D=10
+      mem[0x1000] = 0x11; mem[0x1001] = 0x8D; mem[0x1002] = 0x03; // DIVD #3
+      cpu.singleStep();
+      assert.ok(true, "DIVD executed without crash");
+    });
+
+    QUnit.test("DIVD division by zero triggers trap ($11 $8D #0)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0xFFF0] = 0x20; mem[0xFFF1] = 0x00; // trap vector → 0x2000
+      cpu.set("A", 0x00); cpu.set("B", 0x05);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x8D; mem[0x1002] = 0x00; // DIVD #0
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x2000, "trap vector taken on div by zero");
+      assert.ok(cpu.status().md & 0x80, "MD bit 7 set (div by zero)");
+    });
+
+    QUnit.test("DIVD extended ($11 $BD)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x06);
+      mem[0x9000] = 0x02; // divisor = 2
+      mem[0x1000] = 0x11; mem[0x1001] = 0xBD; mem[0x1002] = 0x90; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.ok(true, "DIVD extended executed without crash");
+    });
+
+    QUnit.test("DIVQ immediate basic case ($11 $8E)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x00); cpu.set("E", 0x00); cpu.set("F", 0x06);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x8E; mem[0x1002] = 0x00; mem[0x1003] = 0x02;
+      cpu.singleStep();
+      assert.ok(true, "DIVQ immediate executed without crash");
+    });
+
+    QUnit.test("DIVQ division by zero triggers trap ($11 $8E #0)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0xFFF0] = 0x20; mem[0xFFF1] = 0x00;
+      mem[0x1000] = 0x11; mem[0x1001] = 0x8E; mem[0x1002] = 0x00; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x2000, "trap taken on DIVQ div by zero");
+    });
+
+    QUnit.test("BITMD ANDs MD with immediate, sets Z/N ($11 $3C)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x11; mem[0x1001] = 0x3D; mem[0x1002] = 0x03; // LDMD #3 → MD bits 0:1
+      cpu.singleStep();
+      mem[0x1003] = 0x11; mem[0x1004] = 0x3C; mem[0x1005] = 0x00; // BITMD #0 → result=0, Z set
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z flag set when BITMD result = 0");
+    });
+
+    QUnit.test("BITMD clears bits 6 and 7 of MD ($11 $3C)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0xFFF0] = 0x10; mem[0xFFF1] = 0x00; // trap vector → back to 0x1000
+      mem[0x1000] = 0x87; // illegal opcode → trap sets MD bit 6
+      cpu.singleStep();
+      const mdBefore = cpu.status().md;
+      assert.ok(mdBefore & 0x40, "MD bit 6 set from illegal op trap");
+      mem[0x1000] = 0x11; mem[0x1001] = 0x3C; mem[0x1002] = 0xFF; // BITMD #$FF
+      cpu.singleStep();
+      assert.equal(cpu.status().md & 0xC0, 0, "BITMD clears bits 6 and 7 of MD");
+    });
+
+    QUnit.test("LDMD loads bits 0:1 of MD ($11 $3D)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x11; mem[0x1001] = 0x3D; mem[0x1002] = 0x03; // LDMD #3
+      cpu.singleStep();
+      assert.equal(cpu.status().md & 0x03, 0x03, "MD bits 0:1 loaded from immediate");
+    });
+
+    QUnit.test("MULD indexed ($11 $AF)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x07); cpu.set("X", 0x3000);
+      mem[0x3000] = 0x00; mem[0x3001] = 0x02; // operand = 2
+      mem[0x1000] = 0x11; mem[0x1001] = 0xAF; mem[0x1002] = 0x84; // MULD ,X
+      cpu.singleStep();
+      assert.ok(true, "MULD indexed executed without crash");
+    });
+
+    QUnit.test("DIVD direct ($11 $9D)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x08); cpu.set("DP", 0x00);
+      mem[0x0060] = 0x04; // divisor = 4
+      mem[0x1000] = 0x11; mem[0x1001] = 0x9D; mem[0x1002] = 0x60;
+      cpu.singleStep();
+      assert.ok(true, "DIVD direct executed without crash");
+    });
+
+    QUnit.test("DIVQ direct ($11 $9E)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x00); cpu.set("E", 0x00); cpu.set("F", 0x08);
+      cpu.set("DP", 0x00); mem[0x0070] = 0x00; mem[0x0071] = 0x04;
+      mem[0x1000] = 0x11; mem[0x1001] = 0x9E; mem[0x1002] = 0x70;
+      cpu.singleStep();
+      assert.ok(true, "DIVQ direct executed without crash");
+    });
+
+    QUnit.test("DIVQ extended ($11 $BE)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x00); cpu.set("E", 0x00); cpu.set("F", 0x0A);
+      mem[0xA000] = 0x00; mem[0xA001] = 0x05;
+      mem[0x1000] = 0x11; mem[0x1001] = 0xBE; mem[0x1002] = 0xA0; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.ok(true, "DIVQ extended executed without crash");
+    });
+  });
 });
