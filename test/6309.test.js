@@ -398,6 +398,86 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
     });
   });
 
+  QUnit.module("Page $10 Instructions", () => {
+    QUnit.module("Inter-Register Operations", () => {
+      QUnit.test("ADDR D,X: X = X + D", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("A", 0x00);
+        cpu.set("B", 0x10); // D = 0x0010
+        cpu.set("X", 0x0100);
+
+        mem[0x1000] = 0x10;
+        mem[0x1001] = 0x30;
+        mem[0x1002] = 0x01; // src=D(0), dst=X(1)
+
+        cpu.singleStep();
+        assert.equal(cpu.status().x, 0x0110, "X = X + D");
+      });
+
+      QUnit.test("SUBR A,B: B = B - A", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("A", 0x03);
+        cpu.set("B", 0x10);
+
+        mem[0x1000] = 0x10;
+        mem[0x1001] = 0x32;
+        mem[0x1002] = 0x89; // src=A(8), dst=B(9)
+
+        cpu.singleStep();
+        assert.equal(cpu.status().b, 0x0D, "B = B - A = 0x0D");
+      });
+
+      QUnit.test("CMPR D,X: sets flags for X - D, no store", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("A", 0x01);
+        cpu.set("B", 0x00); // D = 0x0100
+        cpu.set("X", 0x0100);
+
+        mem[0x1000] = 0x10;
+        mem[0x1001] = 0x37;
+        mem[0x1002] = 0x01; // src=D(0), dst=X(1)
+
+        cpu.singleStep();
+        assert.ok(cpu.status().flags & 4, "Z set (X == D)");
+        assert.equal(cpu.status().x, 0x0100, "X unchanged");
+      });
+    });
+
+    QUnit.module("Stack W", () => {
+      QUnit.test("PSHSW pushes W (E,F) onto S stack", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("E", 0xAB);
+        cpu.set("F", 0xCD);
+        cpu.set("SP", 0x0200);
+
+        mem[0x1000] = 0x10;
+        mem[0x1001] = 0x38; // PSHSW
+
+        cpu.singleStep();
+
+        assert.equal(cpu.status().sp, 0x01FE, "S decremented by 2");
+        assert.equal(mem[0x01FE], 0xAB, "E at top of stack");
+        assert.equal(mem[0x01FF], 0xCD, "F below E");
+      });
+
+      QUnit.test("PULSW restores W from S stack", (assert) => {
+        const { cpu, mem } = createTestCPU();
+        cpu.set("SP", 0x01FE);
+        mem[0x01FE] = 0x12;
+        mem[0x01FF] = 0x34;
+
+        mem[0x1000] = 0x10;
+        mem[0x1001] = 0x39; // PULSW
+
+        cpu.singleStep();
+
+        assert.equal(cpu.status().e, 0x12, "E restored");
+        assert.equal(cpu.status().f, 0x34, "F restored");
+        assert.equal(cpu.status().sp, 0x0200, "S incremented by 2");
+      });
+    });
+  });
+
   QUnit.module("Trap System", () => {
     QUnit.test("Illegal opcode triggers trap via $FFF0 vector", (assert) => {
       const { cpu, mem } = createTestCPU();

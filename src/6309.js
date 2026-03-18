@@ -374,18 +374,18 @@ let cycles2 = [
     5,
     5,
     5 /* 20-2F */,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
+    4 /* ADDR */,
+    4 /* ADCR */,
+    4 /* SUBR */,
+    4 /* SBCR */,
+    4 /* ANDR */,
+    4 /* ORR */,
+    4 /* EORR */,
+    4 /* CMPR */,
+    6 /* PSHSW */,
+    6 /* PULSW */,
+    6 /* PSHUW */,
+    6 /* PULUW */,
     0,
     0,
     0,
@@ -1430,6 +1430,24 @@ const oSBC = (b, v) => {
     setV8(b, v, temp);
     return temp & 0xff;
   };
+const oADC16 = (b, v) => {
+    const temp = b + v + (CC & F_CARRY);
+    CC &= ~(F_CARRY | F_ZERO | F_OVERFLOW | F_NEGATIVE);
+    if ((temp & 0xffff) === 0) CC |= F_ZERO;
+    if (temp & 0x8000) CC |= F_NEGATIVE;
+    if (temp & 0x10000) CC |= F_CARRY;
+    setV16(b, v, temp);
+    return temp & 0xffff;
+  };
+const oSBC16 = (b, v) => {
+    const temp = b - v - (CC & F_CARRY);
+    CC &= ~(F_CARRY | F_ZERO | F_OVERFLOW | F_NEGATIVE);
+    if ((temp & 0xffff) === 0) CC |= F_ZERO;
+    if (temp & 0x8000) CC |= F_NEGATIVE;
+    if (temp & 0x10000) CC |= F_CARRY;
+    setV16(b, v, temp);
+    return temp & 0xffff;
+  };
 
   /*
 var oSUB = function(b,v) {
@@ -2061,6 +2079,39 @@ const step = () => {
               addr = signed16(fetch16());
               if ((CC & F_NEGATIVE) ^ ((CC & F_OVERFLOW) << 2) || CC & F_ZERO)
                 PC += addr;
+              break;
+            case 0x30: case 0x31: case 0x32: case 0x33:
+            case 0x34: case 0x35: case 0x36: case 0x37: {
+              // Inter-register ops: ADDR, ADCR, SUBR, SBCR, ANDR, ORR, EORR, CMPR
+              const irpb = fetch();
+              const srcVal = getPBR(irpb >> 4);
+              const dstVal = getPBR(irpb);
+              const irop = opcode & 0x7;
+              let irResult;
+              switch (irop) {
+                case 0: irResult = oADD16(dstVal, srcVal); break;   // ADDR
+                case 1: irResult = oADC16(dstVal, srcVal); break;   // ADCR
+                case 2: irResult = oSUB16(dstVal, srcVal); break;   // SUBR
+                case 3: irResult = oSBC16(dstVal, srcVal); break;   // SBCR
+                case 4: irResult = dstVal & srcVal; flagsNZ16(irResult); break; // ANDR
+                case 5: irResult = dstVal | srcVal; flagsNZ16(irResult); break; // ORR
+                case 6: irResult = dstVal ^ srcVal; flagsNZ16(irResult); break; // EORR
+                case 7: oSUB16(dstVal, srcVal); irResult = dstVal; break;       // CMPR
+              }
+              if (irop !== 7) setPBR(irpb, irResult);
+              break;
+            }
+            case 0x38: // PSHSW: push W (E then F) onto S
+              PUSHB(rF); PUSHB(rE);
+              break;
+            case 0x39: // PULSW: pull W (F then E) from S
+              rE = PULLB(); rF = PULLB();
+              break;
+            case 0x3A: // PSHUW: push W (E then F) onto U
+              PUSHBU(rF); PUSHBU(rE);
+              break;
+            case 0x3B: // PULUW: pull W (F then E) from U
+              rE = PULLBU(); rF = PULLBU();
               break;
             case 0x3f: //SWI2
               CC |= F_ENTIRE;
