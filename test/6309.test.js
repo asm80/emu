@@ -285,6 +285,75 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
     });
   });
 
+  QUnit.module("Page 0 New Instructions", () => {
+    QUnit.test("OIM direct: OR immediate to memory", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x0050] = 0x0F;
+      cpu.set("DP", 0x00);
+
+      mem[0x1000] = 0x01; // OIM direct
+      mem[0x1001] = 0xF0; // immediate
+      mem[0x1002] = 0x50; // direct page offset
+
+      cpu.singleStep();
+      assert.equal(mem[0x0050], 0xFF, "OIM: 0x0F | 0xF0 = 0xFF");
+    });
+
+    QUnit.test("AIM direct: AND immediate to memory", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x0050] = 0xFF;
+      cpu.set("DP", 0x00);
+
+      mem[0x1000] = 0x02; // AIM direct
+      mem[0x1001] = 0x0F; // immediate
+      mem[0x1002] = 0x50;
+
+      cpu.singleStep();
+      assert.equal(mem[0x0050], 0x0F, "AIM: 0xFF & 0x0F = 0x0F");
+    });
+
+    QUnit.test("EIM direct: EOR immediate to memory", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x0050] = 0xAA;
+      cpu.set("DP", 0x00);
+
+      mem[0x1000] = 0x05; // EIM direct
+      mem[0x1001] = 0xFF; // immediate
+      mem[0x1002] = 0x50;
+
+      cpu.singleStep();
+      assert.equal(mem[0x0050], 0x55, "EIM: 0xAA ^ 0xFF = 0x55");
+    });
+
+    QUnit.test("TIM direct: test immediate, no write", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x0050] = 0xAA;
+      cpu.set("DP", 0x00);
+
+      mem[0x1000] = 0x0B; // TIM direct
+      mem[0x1001] = 0x55; // immediate
+      mem[0x1002] = 0x50;
+
+      cpu.singleStep();
+      assert.equal(mem[0x0050], 0xAA, "TIM does not write memory");
+      // 0xAA & 0x55 = 0x00, so Z should be set
+      assert.ok(cpu.status().flags & 4, "Z flag set (result is zero)");
+    });
+
+    QUnit.test("OIM sets N flag when result has bit 7 set", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x0050] = 0x00;
+      cpu.set("DP", 0x00);
+
+      mem[0x1000] = 0x01; // OIM direct
+      mem[0x1001] = 0x80;
+      mem[0x1002] = 0x50;
+
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 8, "N flag set");
+    });
+  });
+
   QUnit.module("Trap System", () => {
     QUnit.test("Illegal opcode triggers trap via $FFF0 vector", (assert) => {
       const { cpu, mem } = createTestCPU();

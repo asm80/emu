@@ -43,17 +43,17 @@ let byteTo, byteAt;
 
 let cycles = [
     6,
-    0,
-    0,
+    6 /* OIM direct */,
+    6 /* AIM direct */,
     6,
     6,
-    0,
+    6 /* EIM direct */,
     6,
     6,
     6,
     6,
     6,
-    0,
+    6 /* TIM direct */,
     6,
     6,
     3,
@@ -139,33 +139,33 @@ let cycles = [
     0,
     2 /* 50-5F */,
     6,
-    0,
-    0,
+    7 /* OIM indexed */,
+    7 /* AIM indexed */,
     6,
     6,
-    0,
+    7 /* EIM indexed */,
     6,
     6,
     6,
     6,
     6,
-    0,
+    7 /* TIM indexed */,
     6,
     6,
     3,
     6 /* 60-6F */,
     7,
-    0,
-    0,
+    7 /* OIM extended */,
+    7 /* AIM extended */,
     7,
     7,
-    0,
+    7 /* EIM extended */,
     7,
     7,
     7,
     7,
     7,
-    0,
+    7 /* TIM extended */,
     7,
     7,
     4,
@@ -1724,7 +1724,20 @@ const step = () => {
     if (opcode < 0x10 || (opcode >= 0x60 && opcode < 0x80)) {
       const lo = opcode & 0xF;
       const addrFn = opcode < 0x10 ? dpadd : opcode < 0x70 ? PostByte : fetch16;
-      if (UNARY_OPS[lo]) {
+      if (lo === 0x1 || lo === 0x2 || lo === 0x5 || lo === 0xB) {
+        // OIM(1) AIM(2) EIM(5) TIM(B): imm byte first, then address
+        const imm = fetch();
+        addr = addrFn();
+        const memVal = byteAt(addr);
+        let result;
+        if (lo === 0x1) result = memVal | imm;       // OIM
+        else if (lo === 0x2) result = memVal & imm;  // AIM
+        else if (lo === 0x5) result = memVal ^ imm;  // EIM
+        else result = memVal & imm;                  // TIM (no write)
+        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+        CC |= flagsNZ[result & 0xFF];
+        if (lo !== 0xB) byteTo(addr, result & 0xFF); // TIM does not write
+      } else if (UNARY_OPS[lo]) {
         addr = addrFn();
         byteTo(addr, UNARY_OPS[lo](byteAt(addr)));
       } else if (lo === 0xD) {                      // TST
