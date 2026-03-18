@@ -1898,7 +1898,9 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       cpu.set("A", 0x00); cpu.set("B", 0x0A); // D=10
       mem[0x1000] = 0x11; mem[0x1001] = 0x8D; mem[0x1002] = 0x03; // DIVD #3
       cpu.singleStep();
-      assert.ok(true, "DIVD executed without crash");
+      // DIVD: quotient → W (E:F), remainder → D (A:B)
+      assert.equal(cpu.status().f, 0x03, "quotient 3 in F (W low byte)");
+      assert.equal(cpu.status().b, 0x01, "remainder 1 in B (D low byte)");
     });
 
     QUnit.test("DIVD division by zero triggers trap ($11 $8D #0)", (assert) => {
@@ -1925,7 +1927,9 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       cpu.set("A", 0x00); cpu.set("B", 0x00); cpu.set("E", 0x00); cpu.set("F", 0x06);
       mem[0x1000] = 0x11; mem[0x1001] = 0x8E; mem[0x1002] = 0x00; mem[0x1003] = 0x02;
       cpu.singleStep();
-      assert.ok(true, "DIVQ immediate executed without crash");
+      // DIVQ: Q=6 / 2 → quotient=3 in W (E:F), remainder=0 in D (A:B)
+      assert.equal(cpu.status().f, 0x03, "quotient 3 in F (W low byte)");
+      assert.equal(cpu.status().b, 0x00, "remainder 0 in B (D low byte)");
     });
 
     QUnit.test("DIVQ division by zero triggers trap ($11 $8E #0)", (assert) => {
@@ -1936,7 +1940,7 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.equal(cpu.status().pc, 0x2000, "trap taken on DIVQ div by zero");
     });
 
-    QUnit.test("BITMD ANDs MD with immediate, sets Z/N ($11 $3C)", (assert) => {
+    QUnit.test("BITMD ANDs MD with immediate, sets Z flag ($11 $3C)", (assert) => {
       const { cpu, mem } = createTestCPU();
       mem[0x1000] = 0x11; mem[0x1001] = 0x3D; mem[0x1002] = 0x03; // LDMD #3 → MD bits 0:1
       cpu.singleStep();
@@ -1970,7 +1974,7 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       mem[0x3000] = 0x00; mem[0x3001] = 0x02; // operand = 2
       mem[0x1000] = 0x11; mem[0x1001] = 0xAF; mem[0x1002] = 0x84; // MULD ,X
       cpu.singleStep();
-      assert.ok(true, "MULD indexed executed without crash");
+      assert.equal(cpu.status().f, 0x0E, "MULD indexed: F (Q low byte) = 14 (7*2)");
     });
 
     QUnit.test("DIVD direct ($11 $9D)", (assert) => {
