@@ -354,6 +354,50 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
     });
   });
 
+  QUnit.module("SEXW and LDQ", () => {
+    QUnit.test("SEXW: sign extends W into D (W negative)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x80); // W = 0x8000 (negative)
+      cpu.set("F", 0x00);
+
+      mem[0x1000] = 0x14; // SEXW
+      cpu.singleStep();
+
+      assert.equal(cpu.status().a, 0xFF, "A = 0xFF (sign extension)");
+      assert.equal(cpu.status().b, 0xFF, "B = 0xFF (sign extension)");
+      assert.equal(cpu.status().e, 0x80, "W unchanged");
+    });
+
+    QUnit.test("SEXW: sign extends W into D (W positive)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x7F);
+      cpu.set("F", 0xFF);
+
+      mem[0x1000] = 0x14; // SEXW
+      cpu.singleStep();
+
+      assert.equal(cpu.status().a, 0x00, "A = 0x00");
+      assert.equal(cpu.status().b, 0x00, "B = 0x00");
+    });
+
+    QUnit.test("LDQ immediate: loads 4 bytes into Q", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0xCD; // LDQ imm
+      mem[0x1001] = 0x11;
+      mem[0x1002] = 0x22;
+      mem[0x1003] = 0x33;
+      mem[0x1004] = 0x44;
+
+      cpu.singleStep();
+
+      assert.equal(cpu.status().a, 0x11, "A = 0x11");
+      assert.equal(cpu.status().b, 0x22, "B = 0x22");
+      assert.equal(cpu.status().e, 0x33, "E = 0x33");
+      assert.equal(cpu.status().f, 0x44, "F = 0x44");
+    });
+  });
+
   QUnit.module("Trap System", () => {
     QUnit.test("Illegal opcode triggers trap via $FFF0 vector", (assert) => {
       const { cpu, mem } = createTestCPU();

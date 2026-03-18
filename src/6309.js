@@ -62,7 +62,7 @@ let cycles = [
     0,
     2,
     4,
-    0,
+    4 /* SEXW */,
     0,
     5,
     9,
@@ -247,7 +247,7 @@ let cycles = [
     2,
     2,
     3,
-    0,
+    5 /* LDQ imm */,
     3,
     0 /* C0-CF */,
     4,
@@ -1759,6 +1759,16 @@ const step = () => {
       case 0x12: //NOP
         break;
       case 0x13: //SYNC
+        break;
+      case 0x14: // SEXW: sign extend W bit 15 into D
+        if (rE & 0x80) { rA = 0xFF; rB = 0xFF; }
+        else { rA = 0; rB = 0; }
+        break;
+      case 0xCD: // LDQ immediate: load 4 bytes into Q (A:B:E:F)
+        rA = fetch(); rB = fetch(); rE = fetch(); rF = fetch();
+        CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+        if (getQ() === 0) CC |= F_ZERO;
+        if (rA & 0x80) CC |= F_NEGATIVE;
         break;
       case 0x16: //LBRA relative
         addr = signed16(fetch16());
