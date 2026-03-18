@@ -1685,7 +1685,7 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.ok(cpu.status().flags & 0x04, "Z set when U = operand");
     });
 
-    QUnit.test("CMPU immediate U > operand — C clear, N matches sign", (assert) => {
+    QUnit.test("CMPU immediate U > operand — C clear", (assert) => {
       const { cpu, mem } = createTestCPU();
       cpu.set("U", 0x0200);
       mem[0x1000] = 0x11; mem[0x1001] = 0x83; mem[0x1002] = 0x01; mem[0x1003] = 0x00;
