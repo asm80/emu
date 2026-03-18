@@ -1031,7 +1031,7 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       mem[0x1000] = 0x1F; mem[0x1001] = 0xC8; // TFR zero,A (src=C=zero, dst=8=A)
       cpu.singleStep();
       // zero register returns 0; 16→8 bit: low byte = 0x00
-      assert.ok(cpu.status().a === 0x00 || cpu.status().a === 0xFF, "A = 0x00 or 0xFF from zero reg");
+      assert.equal(cpu.status().a, 0x00, "A = 0x00 from zero register");
     });
 
     QUnit.test("EXG W↔D exchanges W and D", (assert) => {
