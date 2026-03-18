@@ -831,4 +831,140 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.ok(sBefore > sAfter, "S stack decreased (registers pushed)");
     });
   });
+
+  QUnit.module("PSHS/PULS register bits", () => {
+    // Helper: enable native mode so E/F bits in postbyte work
+    const enableNative = (cpu, mem, pc) => {
+      mem[pc] = 0x11; mem[pc + 1] = 0x3D; mem[pc + 2] = 0x01; // LDMD #1
+      cpu.singleStep();
+    };
+
+    QUnit.test("PSHS 0xFF pushes all 8 standard registers", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x11); cpu.set("B", 0x22); cpu.set("X", 0x1234);
+      cpu.set("Y", 0x5678); cpu.set("U", 0xABCD); cpu.set("DP", 0x05);
+      cpu.set("CC", 0x55); cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x34; mem[0x1001] = 0xFF; // PSHS #$FF
+      cpu.singleStep();
+      assert.ok(cpu.status().sp < 0x0200, "SP decreased after PSHS");
+      assert.equal(cpu.status().sp, 0x0200 - 12, "SP decreased by 12 bytes (PC=2, U=2, Y=2, X=2, DP=1, B=1, A=1, CC=1)");
+    });
+
+    QUnit.test("PSHS individual bits: U (0x40)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("U", 0xBEEF); cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x34; mem[0x1001] = 0x40; // PSHS #$40 (U only)
+      cpu.singleStep();
+      assert.equal(cpu.status().sp, 0x01FE, "SP decreased by 2");
+      const val = (mem[0x01FE] << 8) | mem[0x01FF];
+      assert.equal(val, 0xBEEF, "U value on stack");
+    });
+
+    QUnit.test("PSHS individual bits: Y (0x20)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("Y", 0xCAFE); cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x34; mem[0x1001] = 0x20; // PSHS #$20 (Y only)
+      cpu.singleStep();
+      assert.equal(cpu.status().sp, 0x01FE, "SP decreased by 2");
+      const val = (mem[0x01FE] << 8) | mem[0x01FF];
+      assert.equal(val, 0xCAFE, "Y value on stack");
+    });
+
+    QUnit.test("PSHS individual bits: X (0x10)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x1234); cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x34; mem[0x1001] = 0x10; // PSHS #$10 (X only)
+      cpu.singleStep();
+      assert.equal(cpu.status().sp, 0x01FE, "SP decreased by 2");
+    });
+
+    QUnit.test("PSHS individual bits: DP (0x08)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("DP", 0x42); cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x34; mem[0x1001] = 0x08; // PSHS #$08 (DP only)
+      cpu.singleStep();
+      assert.equal(cpu.status().sp, 0x01FF, "SP decreased by 1");
+      assert.equal(mem[0x01FF], 0x42, "DP on stack");
+    });
+
+    QUnit.test("PSHS individual bits: B (0x04)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("B", 0x77); cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x34; mem[0x1001] = 0x04; // PSHS #$04 (B only)
+      cpu.singleStep();
+      assert.equal(mem[0x01FF], 0x77, "B on stack");
+    });
+
+    QUnit.test("PSHS individual bits: A (0x02)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x33); cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x34; mem[0x1001] = 0x02; // PSHS #$02 (A only)
+      cpu.singleStep();
+      assert.equal(mem[0x01FF], 0x33, "A on stack");
+    });
+
+    QUnit.test("PULS restores A, B, X, Y from stack", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x11); cpu.set("B", 0x22); cpu.set("X", 0x3456); cpu.set("Y", 0x789A);
+      cpu.set("SP", 0x0200);
+      // Push A, B, X, Y
+      mem[0x1000] = 0x34; mem[0x1001] = 0x36; // PSHS #$36 (B|A|X|Y)
+      cpu.singleStep();
+      // Modify registers so pull restores them
+      cpu.set("A", 0); cpu.set("B", 0); cpu.set("X", 0); cpu.set("Y", 0);
+      mem[0x1002] = 0x35; mem[0x1003] = 0x36; // PULS #$36
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x11, "A restored");
+      assert.equal(cpu.status().b, 0x22, "B restored");
+      assert.equal(cpu.status().x, 0x3456, "X restored");
+      assert.equal(cpu.status().y, 0x789A, "Y restored");
+    });
+
+    QUnit.test("PULS with PC bit (0x80) restores PC", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x01FE);
+      mem[0x01FE] = 0x20; mem[0x01FF] = 0x00; // value 0x2000 on stack
+      mem[0x1000] = 0x35; mem[0x1001] = 0x80; // PULS #$80 (PC only)
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x2000, "PC restored from stack");
+    });
+
+    QUnit.test("PULS with U bit (0x40) restores U", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x01FE);
+      mem[0x01FE] = 0xDE; mem[0x01FF] = 0xAD;
+      mem[0x1000] = 0x35; mem[0x1001] = 0x40; // PULS #$40
+      cpu.singleStep();
+      assert.equal(cpu.status().u, 0xDEAD, "U restored from stack");
+    });
+
+    QUnit.test("PULS with DP bit (0x08) restores DP", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x01FF);
+      mem[0x01FF] = 0xAB;
+      mem[0x1000] = 0x35; mem[0x1001] = 0x08; // PULS #$08
+      cpu.singleStep();
+      assert.equal(cpu.status().dp, 0xAB, "DP restored from stack");
+    });
+
+    QUnit.test("PSHU/PULU push and pull to U stack", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x55); cpu.set("U", 0x0300);
+      mem[0x1000] = 0x36; mem[0x1001] = 0x02; // PSHU #$02 (A only)
+      cpu.singleStep();
+      assert.equal(mem[0x02FF], 0x55, "A pushed to U stack");
+      cpu.set("A", 0);
+      mem[0x1002] = 0x37; mem[0x1003] = 0x02; // PULU #$02
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x55, "A pulled from U stack");
+    });
+
+    QUnit.test("PSHU with Y, X, S, PC bits", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("U", 0x0300); cpu.set("Y", 0x1111); cpu.set("X", 0x2222);
+      mem[0x1000] = 0x36; mem[0x1001] = 0xF0; // PSHU #$F0 (PC, S, Y, X)
+      cpu.singleStep();
+      assert.ok(cpu.status().u < 0x0300, "U decreased");
+    });
+  });
 });
