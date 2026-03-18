@@ -2013,6 +2013,44 @@ const step = () => {
               CC &= ~F_OVERFLOW;
               return T - oldT;
             }
+
+            // W-register arithmetic ($10 $80-$BF, A-side only)
+            if (!isB) {
+              const rv = () => mode === 0 ? fetch16()
+                : ReadWord(mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16());
+              if (lo === 0x0) { setW(oSUB16(getW(), rv())); return T - oldT; } // SUBW
+              if (lo === 0x1) { oCMP16(getW(), rv()); return T - oldT; }        // CMPW
+              if (lo === 0x2) { setW(oSBC16(getW(), rv())); return T - oldT; } // SBCD (W with borrow)
+              if (lo === 0x4) { const r = getD() & rv(); setD(r); flagsNZ16(r); CC &= ~F_OVERFLOW; return T - oldT; } // ANDD
+              if (lo === 0x5) { const r = getD() & rv(); flagsNZ16(r); CC &= ~F_OVERFLOW; return T - oldT; } // BITD (no store)
+              if (lo === 0x6) { setW(rv()); flagsNZ16(getW()); CC &= ~F_OVERFLOW; return T - oldT; } // LDW
+              if (lo === 0x7 && mode !== 0) { // STW (no imm)
+                addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
+                WriteWord(addr, getW()); flagsNZ16(getW()); CC &= ~F_OVERFLOW; return T - oldT;
+              }
+              if (lo === 0x8) { const r = getD() ^ rv(); setD(r); flagsNZ16(r); CC &= ~F_OVERFLOW; return T - oldT; } // EORD
+              if (lo === 0x9) { setD(oADC16(getD(), rv())); return T - oldT; } // ADCD
+              if (lo === 0xA) { const r = getD() | rv(); setD(r); flagsNZ16(r); CC &= ~F_OVERFLOW; return T - oldT; } // ORD
+              if (lo === 0xB) { setW(oADD16(getW(), rv())); return T - oldT; } // ADDW
+            }
+
+            // LDQ ($10 DC/EC/FC) and STQ ($10 DD/ED/FD) — B-side
+            if (isB && lo === 0xC && mode !== 0) { // LDQ direct/indexed/extended
+              addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
+              rA = byteAt(addr); rB = byteAt(addr + 1); rE = byteAt(addr + 2); rF = byteAt(addr + 3);
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              if (getQ() === 0) CC |= F_ZERO;
+              if (rA & 0x80) CC |= F_NEGATIVE;
+              return T - oldT;
+            }
+            if (isB && lo === 0xD && mode !== 0) { // STQ direct/indexed/extended
+              addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
+              byteTo(addr, rA); byteTo(addr + 1, rB); byteTo(addr + 2, rE); byteTo(addr + 3, rF);
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              if (getQ() === 0) CC |= F_ZERO;
+              if (rA & 0x80) CC |= F_NEGATIVE;
+              return T - oldT;
+            }
           }
 
           switch (opcode) {

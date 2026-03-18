@@ -522,6 +522,72 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
     });
   });
 
+  QUnit.module("W Arithmetic and LDQ/STQ ($10 prefix)", () => {
+    QUnit.test("LDW immediate: W = operand", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0x1000] = 0x10;
+      mem[0x1001] = 0x86; // LDW imm
+      mem[0x1002] = 0xAB;
+      mem[0x1003] = 0xCD;
+
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0xAB, "E = 0xAB");
+      assert.equal(cpu.status().f, 0xCD, "F = 0xCD");
+    });
+
+    QUnit.test("STW direct: stores W to memory", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x12);
+      cpu.set("F", 0x34);
+      cpu.set("DP", 0x00);
+
+      mem[0x1000] = 0x10;
+      mem[0x1001] = 0x97; // STW direct
+      mem[0x1002] = 0x50;
+
+      cpu.singleStep();
+      assert.equal(mem[0x0050], 0x12, "high byte stored");
+      assert.equal(mem[0x0051], 0x34, "low byte stored");
+    });
+
+    QUnit.test("LDQ direct: loads 4 bytes into Q", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("DP", 0x00);
+      mem[0x0050] = 0x11;
+      mem[0x0051] = 0x22;
+      mem[0x0052] = 0x33;
+      mem[0x0053] = 0x44;
+
+      mem[0x1000] = 0x10;
+      mem[0x1001] = 0xDC; // LDQ direct
+      mem[0x1002] = 0x50;
+
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x11);
+      assert.equal(cpu.status().b, 0x22);
+      assert.equal(cpu.status().e, 0x33);
+      assert.equal(cpu.status().f, 0x44);
+    });
+
+    QUnit.test("STQ direct: stores Q to 4 bytes", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0xAA); cpu.set("B", 0xBB);
+      cpu.set("E", 0xCC); cpu.set("F", 0xDD);
+      cpu.set("DP", 0x00);
+
+      mem[0x1000] = 0x10;
+      mem[0x1001] = 0xDD; // STQ direct
+      mem[0x1002] = 0x60;
+
+      cpu.singleStep();
+      assert.equal(mem[0x0060], 0xAA);
+      assert.equal(mem[0x0061], 0xBB);
+      assert.equal(mem[0x0062], 0xCC);
+      assert.equal(mem[0x0063], 0xDD);
+    });
+  });
+
   QUnit.module("Trap System", () => {
     QUnit.test("Illegal opcode triggers trap via $FFF0 vector", (assert) => {
       const { cpu, mem } = createTestCPU();
