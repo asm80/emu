@@ -1044,6 +1044,17 @@ const getPBR = (ucPostByte) => {
         return CC;
       case 0xb /* DP */:
         return DP;
+      case 0x6 /* W */:
+        return getW();
+      case 0x7 /* V */:
+        return rV;
+      case 0xC /* zero register */:
+      case 0xD /* zero register */:
+        return 0;
+      case 0xE /* E */:
+        return rE;
+      case 0xF /* F */:
+        return rF;
       default:
         /* illegal */
         return null;
@@ -1084,6 +1095,21 @@ const setPBR = (ucPostByte, v) => {
         return;
       case 0xb /* DP */:
         DP = v;
+        return;
+      case 0x6 /* W */:
+        setW(v);
+        return;
+      case 0x7 /* V */:
+        rV = v & 0xFFFF;
+        return;
+      case 0xC /* zero register - discard */:
+      case 0xD /* zero register - discard */:
+        return;
+      case 0xE /* E */:
+        rE = v & 0xFF;
+        return;
+      case 0xF /* F */:
+        rF = v & 0xFF;
         return;
       default:
         /* illegal */
