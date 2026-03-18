@@ -10,6 +10,8 @@
 
 // CPU registers
 let rA, rB, rX, rY, rU, rS, PC, CC, DP;
+// HD6309 additional registers
+let rE, rF, rV, rMD;
 
 // Condition code flags (EFHINZVC)
 const F_CARRY = 1;
@@ -830,9 +832,18 @@ const getD = () => {
     return rA * 256 + rB;
   };
 const setD = (v) => {
-    rA = (v >> 8) & 0xff;
-    rB = v & 0xff;
+    rA = (v >> 8) & 0xFF;
+    rB = v & 0xFF;
   };
+const getW = () => rE * 256 + rF;
+const setW = (v) => { rE = (v >> 8) & 0xFF; rF = v & 0xFF; };
+const getQ = () => ((rA * 0x1000000 + rB * 0x10000 + rE * 0x100 + rF) >>> 0);
+const setQ = (v) => {
+  rA = (v >>> 24) & 0xFF;
+  rB = (v >>> 16) & 0xFF;
+  rE = (v >>> 8) & 0xFF;
+  rF = v & 0xFF;
+};
 const PUSHB = function (b) {
     byteTo(--rS, b & 0xff);
   };
@@ -2023,6 +2034,10 @@ const reset = () => {
     PC = ReadWord(vecRESET);
     DP = 0;
     CC |= F_FIRQMASK | F_IRQMASK;
+    rE = 0;
+    rF = 0;
+    // rV is NOT reset here — it survives power cycle per spec
+    rMD = 0;
     T = 0;
   };
 
@@ -2627,6 +2642,7 @@ const init = (bt, ba, tck) => {
   byteTo = bt;
   byteAt = ba;
   ticks = tck;
+  rV = 0; // Initialize V once — it survives subsequent resets
   reset();
 };
 
@@ -2667,6 +2683,12 @@ const status = () => ({
   y: rY,
   dp: DP,
   flags: CC,
+  e: rE,
+  f: rF,
+  w: getW(),
+  q: getQ(),
+  v: rV,
+  md: rMD,
 });
 
 /**
@@ -2776,6 +2798,21 @@ const set = (reg, value) => {
       return;
     case "DP":
       DP = value;
+      return;
+    case "E":
+      rE = value & 0xFF;
+      return;
+    case "F":
+      rF = value & 0xFF;
+      return;
+    case "W":
+      setW(value);
+      return;
+    case "V":
+      rV = value & 0xFFFF;
+      return;
+    case "MD":
+      rMD = value & 0xFF;
       return;
   }
 };
