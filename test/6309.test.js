@@ -1062,4 +1062,149 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.equal(cpu.status().dp, 0x5A, "DP = CC after TFR CC,DP");
     });
   });
+
+  QUnit.module("PostByte indexed addressing modes", () => {
+    // LDA indexed = 0xA6 pb; loads A from address computed by postbyte
+    const ldaIndexed = (cpu, mem, pb, extraBytes = []) => {
+      mem[0x1000] = 0xA6;
+      mem[0x1001] = pb;
+      extraBytes.forEach((b, i) => { mem[0x1002 + i] = b; });
+    };
+
+    QUnit.test(",reg++ post-increment by 2 (case 1)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x2000); mem[0x2000] = 0x42;
+      ldaIndexed(cpu, mem, 0x81); // X post-increment by 2: pb = 1000 0001 (case 1 = ,X++)
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x42, "A loaded from [X]");
+      assert.equal(cpu.status().x, 0x2002, "X incremented by 2");
+    });
+
+    QUnit.test(",--reg pre-decrement by 2 (case 3)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x2002); mem[0x2000] = 0x99;
+      ldaIndexed(cpu, mem, 0x83); // X pre-decrement by 2: pb = 1000 0011
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x99, "A loaded from [X-2]");
+      assert.equal(cpu.status().x, 0x2000, "X decremented by 2");
+    });
+
+    QUnit.test(",-reg pre-decrement by 1 (case 2)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x2001); mem[0x2000] = 0x11;
+      ldaIndexed(cpu, mem, 0x82); // X pre-decrement by 1
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x11, "A loaded from [X-1]");
+      assert.equal(cpu.status().x, 0x2000, "X decremented by 1");
+    });
+
+    QUnit.test(",reg+B offset (case 5)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x2000); cpu.set("B", 0x05); mem[0x2005] = 0xAA;
+      ldaIndexed(cpu, mem, 0x85); // X+B
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0xAA, "A loaded from [X+B]");
+    });
+
+    QUnit.test(",reg+A offset (case 6)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x2000); cpu.set("A", 0x03); mem[0x2003] = 0xBB;
+      ldaIndexed(cpu, mem, 0x86); // X+A
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0xBB, "A loaded from [X+A]");
+    });
+
+    QUnit.test("illegal postbyte case 7 does not crash", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x2000);
+      ldaIndexed(cpu, mem, 0x87); // illegal
+      cpu.singleStep();
+      assert.ok(true, "no crash on illegal postbyte 7");
+    });
+
+    QUnit.test(",reg+16bit offset (case 9)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x1000); mem[0x1010] = 0xCC;
+      ldaIndexed(cpu, mem, 0x89, [0x00, 0x10]); // X + 0x0010
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0xCC, "A loaded from [X+0x0010]");
+    });
+
+    QUnit.test("illegal postbyte case 0xA does not crash", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x2000);
+      ldaIndexed(cpu, mem, 0x8A); // illegal
+      cpu.singleStep();
+      assert.ok(true, "no crash on illegal postbyte 0xA");
+    });
+
+    QUnit.test(",reg+D offset (case 0xB)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x2000); cpu.set("A", 0x00); cpu.set("B", 0x08);
+      mem[0x2008] = 0xDD;
+      ldaIndexed(cpu, mem, 0x8B); // X+D
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0xDD, "A loaded from [X+D]");
+    });
+
+    QUnit.test("PC+16bit offset (case 0xD)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      // After fetching opcode(0x1000), pb(0x1001), offset hi(0x1002), offset lo(0x1003) → PC=0x1004
+      // EA = PC + 0x0010 = 0x1014
+      mem[0x1014] = 0x7E;
+      ldaIndexed(cpu, mem, 0x8D, [0x00, 0x10]); // PC+0x0010
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x7E, "A loaded from [PC+0x0010]");
+    });
+
+    QUnit.test("illegal postbyte case 0xE does not crash", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      ldaIndexed(cpu, mem, 0x8E); // illegal
+      cpu.singleStep();
+      assert.ok(true, "no crash on illegal postbyte 0xE");
+    });
+
+    QUnit.test("[,ext] extended indirect (case 0xF)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      // pb=0x9F: bit4=1 (indirect), case=0xF; next 2 bytes = pointer address
+      // EA = word at 0x3000 = 0x4000; A = mem[0x4000]
+      mem[0x3000] = 0x40; mem[0x3001] = 0x00; // pointer to 0x4000
+      mem[0x4000] = 0xFE;
+      ldaIndexed(cpu, mem, 0x9F, [0x30, 0x00]); // [[0x3000]]
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0xFE, "A loaded via extended indirect");
+    });
+
+    QUnit.test("Y register as PostByte base (case 4, Y)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("Y", 0x3000); mem[0x3000] = 0x55;
+      ldaIndexed(cpu, mem, 0xA4); // ,Y (pb=0xA4: bits 6:5=01=Y, case=4)
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x55, "A loaded from [Y]");
+    });
+
+    QUnit.test("U register as PostByte base", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("U", 0x4000); mem[0x4000] = 0x66;
+      ldaIndexed(cpu, mem, 0xC4); // ,U (bits 6:5=10=U, case=4)
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x66, "A loaded from [U]");
+    });
+
+    QUnit.test("S register as PostByte base", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x5000); mem[0x5000] = 0x77;
+      ldaIndexed(cpu, mem, 0xE4); // ,S (bits 6:5=11=S, case=4)
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x77, "A loaded from [S]");
+    });
+
+    QUnit.test("Y post-increment (case 0 with Y base)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("Y", 0x2000); mem[0x2000] = 0x12;
+      ldaIndexed(cpu, mem, 0xA0); // ,Y+ (Y post-inc by 1)
+      cpu.singleStep();
+      assert.equal(cpu.status().y, 0x2001, "Y incremented");
+    });
+  });
 });
