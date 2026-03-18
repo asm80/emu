@@ -1324,4 +1324,168 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.ok(cpu.status().flags & 0x04, "Z flag set when D = memory");
     });
   });
+
+  QUnit.module("$10 prefix: Long branches", () => {
+    // PC after $10 $xx $HH $LL = 0x1004, so target = 0x1004 + signed16(offset)
+    const setup = (mem, opcode, offset) => {
+      mem[0x1000] = 0x10;
+      mem[0x1001] = opcode;
+      mem[0x1002] = (offset >> 8) & 0xFF;
+      mem[0x1003] = offset & 0xFF;
+    };
+
+    QUnit.test("LBRA ($16) always branches", (assert) => {
+      // LBRA is a base opcode $16 (not under $10 prefix): 3 bytes total, PC=0x1003 after fetch
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x16; mem[0x1001] = 0x00; mem[0x1002] = 0x10;
+      cpu.singleStep();
+      // PC at fetch end = 0x1003, offset = 0x0010 → 0x1003 + 0x10 = 0x1013
+      assert.equal(cpu.status().pc, 0x1013, "LBRA branches to PC+0x10");
+    });
+
+    QUnit.test("LBRA negative offset branches backward", (assert) => {
+      // LBRA is a base opcode $16: 3 bytes total, PC=0x1003 after fetch
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x16; mem[0x1001] = 0xFF; mem[0x1002] = 0xF0;
+      cpu.singleStep();
+      // PC at fetch end = 0x1003, offset = 0xFFF0 = -16 signed → 0x1003 + (-16) = 0x0FF3
+      assert.equal(cpu.status().pc, 0x0FF3, "LBRA negative offset branches backward");
+    });
+
+    QUnit.test("LBEQ taken when Z set ($10 $27)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x04); // Z=1
+      setup(mem, 0x27, 0x0020);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1024, "LBEQ taken when Z=1");
+    });
+
+    QUnit.test("LBEQ not taken when Z clear", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00);
+      setup(mem, 0x27, 0x0020);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1004, "LBEQ not taken when Z=0");
+    });
+
+    QUnit.test("LBNE taken when Z clear ($10 $26)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00);
+      setup(mem, 0x26, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBNE taken when Z=0");
+    });
+
+    QUnit.test("LBNE not taken when Z set", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x04);
+      setup(mem, 0x26, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1004, "LBNE not taken when Z=1");
+    });
+
+    QUnit.test("LBCS taken when C set ($10 $25)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x01); // C=1
+      setup(mem, 0x25, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBCS taken when C=1");
+    });
+
+    QUnit.test("LBCC taken when C clear ($10 $24)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00);
+      setup(mem, 0x24, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBCC taken when C=0");
+    });
+
+    QUnit.test("LBVS taken when V set ($10 $29)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x02); // V=1
+      setup(mem, 0x29, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBVS taken when V=1");
+    });
+
+    QUnit.test("LBVC taken when V clear ($10 $28)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00);
+      setup(mem, 0x28, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBVC taken when V=0");
+    });
+
+    QUnit.test("LBMI taken when N set ($10 $2B)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x08); // N=1
+      setup(mem, 0x2B, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBMI taken when N=1");
+    });
+
+    QUnit.test("LBPL taken when N clear ($10 $2A)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00);
+      setup(mem, 0x2A, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBPL taken when N=0");
+    });
+
+    QUnit.test("LBGE taken when N=V ($10 $2C)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00); // N=0, V=0: N xor V = 0 → branch
+      setup(mem, 0x2C, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBGE taken when N=V=0");
+    });
+
+    QUnit.test("LBLT taken when N≠V ($10 $2D)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x08); // N=1, V=0: N xor V → branch
+      setup(mem, 0x2D, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBLT taken when N≠V");
+    });
+
+    QUnit.test("LBHI taken when C=0 and Z=0 ($10 $22)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00);
+      setup(mem, 0x22, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBHI taken when C=0,Z=0");
+    });
+
+    QUnit.test("LBLS taken when C=1 or Z=1 ($10 $23)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x01); // C=1
+      setup(mem, 0x23, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBLS taken when C=1");
+    });
+
+    QUnit.test("LBGT taken when Z=0 and N=V ($10 $2E)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00); // Z=0, N=0, V=0
+      setup(mem, 0x2E, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBGT taken when Z=0,N=V");
+    });
+
+    QUnit.test("LBLE taken when Z=1 or N≠V ($10 $2F)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x04); // Z=1
+      setup(mem, 0x2F, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1014, "LBLE taken when Z=1");
+    });
+
+    QUnit.test("LBRN ($10 $21) never branches", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0xFF); // all flags set — still no branch
+      setup(mem, 0x21, 0x0010);
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1004, "LBRN never branches");
+    });
+  });
 });
