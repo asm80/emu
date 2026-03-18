@@ -1675,4 +1675,82 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.equal(cpu.status().pc, 0x1002, "BLE not taken when Z=0, N=V");
     });
   });
+
+  QUnit.module("$11 prefix: CMPU/CMPS", () => {
+    QUnit.test("CMPU immediate equal — Z flag set ($11 $83)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("U", 0x1234);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x83; mem[0x1002] = 0x12; mem[0x1003] = 0x34;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when U = operand");
+    });
+
+    QUnit.test("CMPU immediate U > operand — C clear, N matches sign", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("U", 0x0200);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x83; mem[0x1002] = 0x01; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal(cpu.status().flags & 0x01, 0, "C clear when U > operand");
+    });
+
+    QUnit.test("CMPU immediate U < operand — C set ($11 $83)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("U", 0x0100);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x83; mem[0x1002] = 0x02; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x01, "C set when U < operand (unsigned)");
+    });
+
+    QUnit.test("CMPU direct ($11 $93)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("U", 0x5678); cpu.set("DP", 0x00);
+      mem[0x0020] = 0x56; mem[0x0021] = 0x78;
+      mem[0x1000] = 0x11; mem[0x1001] = 0x93; mem[0x1002] = 0x20;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when U = memory (direct)");
+    });
+
+    QUnit.test("CMPU extended ($11 $B3)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("U", 0xABCD);
+      mem[0x7000] = 0xAB; mem[0x7001] = 0xCD;
+      mem[0x1000] = 0x11; mem[0x1001] = 0xB3; mem[0x1002] = 0x70; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when U = memory (extended)");
+    });
+
+    QUnit.test("CMPS immediate equal — Z flag set ($11 $8C)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x8C; mem[0x1002] = 0x02; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when S = operand");
+    });
+
+    QUnit.test("CMPS immediate S < operand — C set", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x0100);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x8C; mem[0x1002] = 0x02; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x01, "C set when S < operand");
+    });
+
+    QUnit.test("CMPS direct ($11 $9C)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x0200); cpu.set("DP", 0x00);
+      mem[0x0030] = 0x02; mem[0x0031] = 0x00;
+      mem[0x1000] = 0x11; mem[0x1001] = 0x9C; mem[0x1002] = 0x30;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when S = memory (direct)");
+    });
+
+    QUnit.test("CMPS extended ($11 $BC)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x0300);
+      mem[0x8000] = 0x03; mem[0x8001] = 0x00;
+      mem[0x1000] = 0x11; mem[0x1001] = 0xBC; mem[0x1002] = 0x80; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when S = memory (extended)");
+    });
+  });
 });
