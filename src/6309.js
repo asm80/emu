@@ -390,38 +390,38 @@ let cycles2 = [
     0,
     0,
     20 /* 30-3F */,
+    3 /* NEGD */,
+    0,
+    0,
+    3 /* COMD */,
+    3 /* LSRD */,
+    0,
+    3 /* RORD */,
+    3 /* ASRD */,
+    3 /* ASLD */,
+    3 /* ROLD */,
+    3 /* DECD */,
+    0,
+    3 /* INCD */,
+    3 /* TSTD */,
+    0,
+    3 /* CLRD */ /* 40-4F */,
     0,
     0,
     0,
+    3 /* COMW */,
+    3 /* LSRW */,
+    0,
+    3 /* RORW */,
     0,
     0,
+    3 /* ROLW */,
+    3 /* DECW */,
     0,
+    3 /* INCW */,
+    3 /* TSTW */,
     0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0 /* 40-4F */,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0 /* 50-5F */,
+    3 /* CLRW */ /* 50-5F */,
     0,
     0,
     0,
@@ -2113,6 +2113,135 @@ const step = () => {
             case 0x3B: // PULUW: pull W (F then E) from U
               rE = PULLBU(); rF = PULLBU();
               break;
+
+            // D-register unary ops ($10 40-4F)
+            case 0x40: { // NEGD
+              const d40 = getD(); const r40 = (-d40) & 0xFFFF;
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW | F_CARRY);
+              if (r40 === 0) CC |= F_ZERO;
+              if (r40 & 0x8000) CC |= F_NEGATIVE;
+              if (d40 === 0x8000) CC |= F_OVERFLOW;
+              if (d40 !== 0) CC |= F_CARRY;
+              setD(r40); break;
+            }
+            case 0x43: { // COMD
+              const r43 = (~getD()) & 0xFFFF;
+              setD(r43); flagsNZ16(r43); CC |= F_CARRY; CC &= ~F_OVERFLOW; break;
+            }
+            case 0x44: { // LSRD
+              const d44 = getD();
+              CC &= ~(F_ZERO | F_NEGATIVE | F_CARRY);
+              if (d44 & 1) CC |= F_CARRY;
+              const r44 = d44 >>> 1;
+              setD(r44); flagsNZ16(r44); break;
+            }
+            case 0x46: { // RORD
+              const d46 = getD(); const cin46 = (CC & F_CARRY) ? 0x8000 : 0;
+              CC &= ~(F_ZERO | F_NEGATIVE | F_CARRY);
+              if (d46 & 1) CC |= F_CARRY;
+              const r46 = (d46 >>> 1) | cin46;
+              setD(r46); flagsNZ16(r46); break;
+            }
+            case 0x47: { // ASRD
+              const d47 = getD();
+              CC &= ~(F_ZERO | F_NEGATIVE | F_CARRY);
+              if (d47 & 1) CC |= F_CARRY;
+              const r47 = (d47 & 0x8000) | (d47 >>> 1);
+              setD(r47); flagsNZ16(r47); break;
+            }
+            case 0x48: { // ASLD/LSLD
+              const d48 = getD();
+              CC &= ~(F_ZERO | F_NEGATIVE | F_CARRY | F_OVERFLOW);
+              if (d48 & 0x8000) CC |= F_CARRY;
+              if ((d48 ^ (d48 << 1)) & 0x8000) CC |= F_OVERFLOW;
+              const r48 = (d48 << 1) & 0xFFFF;
+              setD(r48); flagsNZ16(r48); break;
+            }
+            case 0x49: { // ROLD
+              const d49 = getD(); const cin49 = (CC & F_CARRY) ? 1 : 0;
+              CC &= ~(F_ZERO | F_NEGATIVE | F_CARRY | F_OVERFLOW);
+              if (d49 & 0x8000) CC |= F_CARRY;
+              if ((d49 ^ (d49 << 1)) & 0x8000) CC |= F_OVERFLOW;
+              const r49 = ((d49 << 1) | cin49) & 0xFFFF;
+              setD(r49); flagsNZ16(r49); break;
+            }
+            case 0x4A: { // DECD
+              const r4a = (getD() - 1) & 0xFFFF;
+              setD(r4a);
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              if (r4a === 0) CC |= F_ZERO;
+              if (r4a & 0x8000) CC |= F_NEGATIVE;
+              if (r4a === 0x7FFF) CC |= F_OVERFLOW;
+              break;
+            }
+            case 0x4C: { // INCD
+              const r4c = (getD() + 1) & 0xFFFF;
+              setD(r4c);
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              if (r4c === 0) CC |= F_ZERO;
+              if (r4c & 0x8000) CC |= F_NEGATIVE;
+              if (r4c === 0x8000) CC |= F_OVERFLOW;
+              break;
+            }
+            case 0x4D: { // TSTD
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              flagsNZ16(getD()); break;
+            }
+            case 0x4F: // CLRD
+              setD(0); CC &= ~(F_NEGATIVE | F_OVERFLOW | F_CARRY); CC |= F_ZERO; break;
+
+            // W-register unary ops ($10 50-5F)
+            case 0x53: { // COMW
+              const r53 = (~getW()) & 0xFFFF;
+              setW(r53); flagsNZ16(r53); CC |= F_CARRY; CC &= ~F_OVERFLOW; break;
+            }
+            case 0x54: { // LSRW
+              const w54 = getW();
+              CC &= ~(F_ZERO | F_NEGATIVE | F_CARRY);
+              if (w54 & 1) CC |= F_CARRY;
+              const r54 = w54 >>> 1;
+              setW(r54); flagsNZ16(r54); break;
+            }
+            case 0x56: { // RORW
+              const w56 = getW(); const cin56 = (CC & F_CARRY) ? 0x8000 : 0;
+              CC &= ~(F_ZERO | F_NEGATIVE | F_CARRY);
+              if (w56 & 1) CC |= F_CARRY;
+              const r56 = (w56 >>> 1) | cin56;
+              setW(r56); flagsNZ16(r56); break;
+            }
+            case 0x59: { // ROLW
+              const w59 = getW(); const cin59 = (CC & F_CARRY) ? 1 : 0;
+              CC &= ~(F_ZERO | F_NEGATIVE | F_CARRY | F_OVERFLOW);
+              if (w59 & 0x8000) CC |= F_CARRY;
+              if ((w59 ^ (w59 << 1)) & 0x8000) CC |= F_OVERFLOW;
+              const r59 = ((w59 << 1) | cin59) & 0xFFFF;
+              setW(r59); flagsNZ16(r59); break;
+            }
+            case 0x5A: { // DECW
+              const r5a = (getW() - 1) & 0xFFFF;
+              setW(r5a);
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              if (r5a === 0) CC |= F_ZERO;
+              if (r5a & 0x8000) CC |= F_NEGATIVE;
+              if (r5a === 0x7FFF) CC |= F_OVERFLOW;
+              break;
+            }
+            case 0x5C: { // INCW
+              const r5c = (getW() + 1) & 0xFFFF;
+              setW(r5c);
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              if (r5c === 0) CC |= F_ZERO;
+              if (r5c & 0x8000) CC |= F_NEGATIVE;
+              if (r5c === 0x8000) CC |= F_OVERFLOW;
+              break;
+            }
+            case 0x5D: { // TSTW
+              CC &= ~(F_ZERO | F_NEGATIVE | F_OVERFLOW);
+              flagsNZ16(getW()); break;
+            }
+            case 0x5F: // CLRW
+              setW(0); CC &= ~(F_NEGATIVE | F_OVERFLOW | F_CARRY); CC |= F_ZERO; break;
+
             case 0x3f: //SWI2
               CC |= F_ENTIRE;
               PUSHW(PC);

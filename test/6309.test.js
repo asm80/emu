@@ -478,6 +478,50 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
     });
   });
 
+  QUnit.module("D/W Register Unary Ops ($10 prefix)", () => {
+    QUnit.test("NEGD: D = -D", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00);
+      cpu.set("B", 0x05); // D = 5
+
+      mem[0x1000] = 0x10;
+      mem[0x1001] = 0x40; // NEGD
+
+      cpu.singleStep();
+
+      assert.equal(cpu.status().a, 0xFF, "A = 0xFF");
+      assert.equal(cpu.status().b, 0xFB, "B = 0xFB (D = -5 = 0xFFFB)");
+    });
+
+    QUnit.test("CLRD: D = 0, Z flag set", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0xFF);
+      cpu.set("B", 0xFF);
+
+      mem[0x1000] = 0x10;
+      mem[0x1001] = 0x4F; // CLRD
+
+      cpu.singleStep();
+
+      assert.equal(cpu.status().a, 0, "A = 0");
+      assert.equal(cpu.status().b, 0, "B = 0");
+      assert.ok(cpu.status().flags & 4, "Z flag set");
+    });
+
+    QUnit.test("INCW: W = W + 1", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x00);
+      cpu.set("F", 0xFF); // W = 0x00FF
+
+      mem[0x1000] = 0x10;
+      mem[0x1001] = 0x5C; // INCW
+
+      cpu.singleStep();
+
+      assert.equal(cpu.status().w, 0x0100, "W = 0x0100");
+    });
+  });
+
   QUnit.module("Trap System", () => {
     QUnit.test("Illegal opcode triggers trap via $FFF0 vector", (assert) => {
       const { cpu, mem } = createTestCPU();
