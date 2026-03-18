@@ -1204,6 +1204,7 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       cpu.set("Y", 0x2000); mem[0x2000] = 0x12;
       ldaIndexed(cpu, mem, 0xA0); // ,Y+ (Y post-inc by 1)
       cpu.singleStep();
+      assert.equal(cpu.status().a, 0x12, "A loaded from [Y]");
       assert.equal(cpu.status().y, 0x2001, "Y incremented");
     });
   });
