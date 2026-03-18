@@ -833,12 +833,6 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
   });
 
   QUnit.module("PSHS/PULS register bits", () => {
-    // Helper: enable native mode so E/F bits in postbyte work
-    const enableNative = (cpu, mem, pc) => {
-      mem[pc] = 0x11; mem[pc + 1] = 0x3D; mem[pc + 2] = 0x01; // LDMD #1
-      cpu.singleStep();
-    };
-
     QUnit.test("PSHS 0xFF pushes all 8 standard registers", (assert) => {
       const { cpu, mem } = createTestCPU();
       cpu.set("A", 0x11); cpu.set("B", 0x22); cpu.set("X", 0x1234);
@@ -876,6 +870,8 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       mem[0x1000] = 0x34; mem[0x1001] = 0x10; // PSHS #$10 (X only)
       cpu.singleStep();
       assert.equal(cpu.status().sp, 0x01FE, "SP decreased by 2");
+      const val = (mem[0x01FE] << 8) | mem[0x01FF];
+      assert.equal(val, 0x1234, "X value on stack");
     });
 
     QUnit.test("PSHS individual bits: DP (0x08)", (assert) => {
@@ -893,6 +889,7 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       mem[0x1000] = 0x34; mem[0x1001] = 0x04; // PSHS #$04 (B only)
       cpu.singleStep();
       assert.equal(mem[0x01FF], 0x77, "B on stack");
+      assert.equal(cpu.status().sp, 0x01FF, "SP decreased by 1");
     });
 
     QUnit.test("PSHS individual bits: A (0x02)", (assert) => {
@@ -901,6 +898,7 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       mem[0x1000] = 0x34; mem[0x1001] = 0x02; // PSHS #$02 (A only)
       cpu.singleStep();
       assert.equal(mem[0x01FF], 0x33, "A on stack");
+      assert.equal(cpu.status().sp, 0x01FF, "SP decreased by 1");
     });
 
     QUnit.test("PULS restores A, B, X, Y from stack", (assert) => {
