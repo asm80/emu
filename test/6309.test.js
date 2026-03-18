@@ -2249,4 +2249,481 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.equal(l, 2, "length = 2");
     });
   });
+
+  QUnit.module("PSHU/PULU register bits", () => {
+    QUnit.test("PSHU pushes A onto U stack (postbyte $02)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0xAB);
+      cpu.set("U", 0x0200);
+      mem[0x1000] = 0x36; mem[0x1001] = 0x02; // PSHU #A
+      cpu.singleStep();
+      assert.equal(cpu.status().u, 0x01FF, "U decremented by 1");
+      assert.equal(mem[0x01FF], 0xAB, "A value on U stack");
+    });
+
+    QUnit.test("PSHU pushes B onto U stack (postbyte $04)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("B", 0xCD);
+      cpu.set("U", 0x0200);
+      mem[0x1000] = 0x36; mem[0x1001] = 0x04; // PSHU #B
+      cpu.singleStep();
+      assert.equal(cpu.status().u, 0x01FF, "U decremented by 1");
+      assert.equal(mem[0x01FF], 0xCD, "B value on U stack");
+    });
+
+    QUnit.test("PSHU pushes X onto U stack (postbyte $10)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x1234);
+      cpu.set("U", 0x0200);
+      mem[0x1000] = 0x36; mem[0x1001] = 0x10; // PSHU #X
+      cpu.singleStep();
+      assert.equal(cpu.status().u, 0x01FE, "U decremented by 2");
+      assert.equal((mem[0x01FE] << 8) | mem[0x01FF], 0x1234, "X value on U stack");
+    });
+
+    QUnit.test("PSHU pushes Y onto U stack (postbyte $20)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("Y", 0x5678);
+      cpu.set("U", 0x0200);
+      mem[0x1000] = 0x36; mem[0x1001] = 0x20; // PSHU #Y
+      cpu.singleStep();
+      assert.equal(cpu.status().u, 0x01FE, "U decremented by 2");
+      assert.equal((mem[0x01FE] << 8) | mem[0x01FF], 0x5678, "Y value on U stack");
+    });
+
+    QUnit.test("PSHU pushes S (postbyte $40) onto U stack", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("SP", 0x0300);
+      cpu.set("U", 0x0200);
+      mem[0x1000] = 0x36; mem[0x1001] = 0x40; // PSHU #S
+      cpu.singleStep();
+      assert.equal(cpu.status().u, 0x01FE, "U decremented by 2");
+    });
+
+    QUnit.test("PSHU pushes PC (postbyte $80) onto U stack", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("U", 0x0200);
+      mem[0x1000] = 0x36; mem[0x1001] = 0x80; // PSHU #PC
+      cpu.singleStep();
+      assert.equal(cpu.status().u, 0x01FE, "U decremented by 2 for PC");
+    });
+
+    QUnit.test("PSHU pushes DP (postbyte $08) onto U stack", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("DP", 0x05);
+      cpu.set("U", 0x0200);
+      mem[0x1000] = 0x36; mem[0x1001] = 0x08; // PSHU #DP
+      cpu.singleStep();
+      assert.equal(cpu.status().u, 0x01FF, "U decremented by 1");
+      assert.equal(mem[0x01FF], 0x05, "DP value on U stack");
+    });
+
+    QUnit.test("PULU pulls A from U stack (postbyte $02)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FF] = 0x42; // A value on stack
+      cpu.set("U", 0x01FF);
+      mem[0x1000] = 0x37; mem[0x1001] = 0x02; // PULU #A
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x42, "A pulled from U stack");
+      assert.equal(cpu.status().u, 0x0200, "U incremented");
+    });
+
+    QUnit.test("PULU pulls X from U stack (postbyte $10)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FE] = 0x12; mem[0x01FF] = 0x34;
+      cpu.set("U", 0x01FE);
+      mem[0x1000] = 0x37; mem[0x1001] = 0x10; // PULU #X
+      cpu.singleStep();
+      assert.equal(cpu.status().x, 0x1234, "X pulled from U stack");
+      assert.equal(cpu.status().u, 0x0200, "U incremented by 2");
+    });
+
+    QUnit.test("PULU pulls PC from U stack (postbyte $80)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FE] = 0x30; mem[0x01FF] = 0x00;
+      cpu.set("U", 0x01FE);
+      mem[0x1000] = 0x37; mem[0x1001] = 0x80; // PULU #PC
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x3000, "PC pulled from U stack");
+    });
+
+    QUnit.test("PULU pulls CC from U stack (postbyte $01)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FF] = 0x05;
+      cpu.set("U", 0x01FF);
+      mem[0x1000] = 0x37; mem[0x1001] = 0x01; // PULU #CC
+      cpu.singleStep();
+      assert.equal(cpu.status().flags & 0x05, 0x05, "CC pulled from U stack");
+    });
+
+    QUnit.test("PULU pulls DP from U stack (postbyte $08)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FF] = 0x07;
+      cpu.set("U", 0x01FF);
+      mem[0x1000] = 0x37; mem[0x1001] = 0x08; // PULU #DP
+      cpu.singleStep();
+      assert.equal(cpu.status().dp, 0x07, "DP pulled from U stack");
+    });
+
+    QUnit.test("PULU pulls Y from U stack (postbyte $20)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FE] = 0xAB; mem[0x01FF] = 0xCD;
+      cpu.set("U", 0x01FE);
+      mem[0x1000] = 0x37; mem[0x1001] = 0x20; // PULU #Y
+      cpu.singleStep();
+      assert.equal(cpu.status().y, 0xABCD, "Y pulled from U stack");
+    });
+
+    QUnit.test("PULU pulls B from U stack (postbyte $04)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FF] = 0x77;
+      cpu.set("U", 0x01FF);
+      mem[0x1000] = 0x37; mem[0x1001] = 0x04; // PULU #B
+      cpu.singleStep();
+      assert.equal(cpu.status().b, 0x77, "B pulled from U stack");
+    });
+
+    QUnit.test("PULU pulls S from U stack (postbyte $40)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FE] = 0x04; mem[0x01FF] = 0x00;
+      cpu.set("U", 0x01FE);
+      mem[0x1000] = 0x37; mem[0x1001] = 0x40; // PULU #S
+      cpu.singleStep();
+      assert.equal(cpu.status().sp, 0x0400, "S pulled from U stack");
+    });
+  });
+
+  QUnit.module("$10 prefix: inter-register ops", () => {
+    QUnit.test("ADDR D,X: D+X->X ($10 $30)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x05); // D=5
+      cpu.set("X", 0x0003);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x30; mem[0x1002] = 0x01; // ADDR D,X (src=D=0, dst=X=1)
+      cpu.singleStep();
+      assert.equal(cpu.status().x, 0x0008, "X = D + X = 5 + 3 = 8");
+    });
+
+    QUnit.test("SUBR D,X: X-D->X ($10 $32)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x0010);
+      cpu.set("A", 0x00); cpu.set("B", 0x05); // D=5
+      mem[0x1000] = 0x10; mem[0x1001] = 0x32; mem[0x1002] = 0x01; // SUBR D,X (src=D=0, dst=X=1)
+      cpu.singleStep();
+      // X = X - D = 16 - 5 = 11
+      assert.equal(cpu.status().x, 0x000B, "X = X - D = 11");
+    });
+
+    QUnit.test("CMPR D,D: equal - Z flag set ($10 $37)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x12); cpu.set("B", 0x34); // D=0x1234
+      mem[0x1000] = 0x10; mem[0x1001] = 0x37; mem[0x1002] = 0x00; // CMPR D,D (src=D=0, dst=D=0)
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z flag set when D = D");
+    });
+
+    QUnit.test("ANDR D,X: D AND X->X ($10 $34)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0xFF); // D=0x00FF
+      cpu.set("X", 0x0F0F);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x34; mem[0x1002] = 0x01; // ANDR D,X (src=D=0, dst=X=1)
+      cpu.singleStep();
+      assert.equal(cpu.status().x, 0x000F, "X = D AND X = 0x00FF AND 0x0F0F = 0x000F");
+    });
+
+    QUnit.test("ORR D,X: D OR X->X ($10 $35)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0xF0); // D=0x00F0
+      cpu.set("X", 0x000F);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x35; mem[0x1002] = 0x01; // ORR D,X (src=D=0, dst=X=1)
+      cpu.singleStep();
+      assert.equal(cpu.status().x, 0x00FF, "X = D OR X = 0x00F0 OR 0x000F = 0x00FF");
+    });
+
+    QUnit.test("EORR D,X: D XOR X->X ($10 $36)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0xFF); // D=0x00FF
+      cpu.set("X", 0x00FF);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x36; mem[0x1002] = 0x01; // EORR D,X (src=D=0, dst=X=1)
+      cpu.singleStep();
+      assert.equal(cpu.status().x, 0x0000, "X = D XOR X = 0x00FF XOR 0x00FF = 0");
+      assert.ok(cpu.status().flags & 0x04, "Z flag set");
+    });
+
+    QUnit.test("ADCR D,X: D+X+C->X ($10 $31)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x05); // D=5
+      cpu.set("X", 0x0003);
+      cpu.set("FLAGS", 0x01); // C=1
+      mem[0x1000] = 0x10; mem[0x1001] = 0x31; mem[0x1002] = 0x01; // ADCR D,X (src=D=0, dst=X=1)
+      cpu.singleStep();
+      assert.equal(cpu.status().x, 0x0009, "X = D + X + C = 5 + 3 + 1 = 9");
+    });
+
+    QUnit.test("SBCR D,X: X-D-C->X ($10 $33)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x0010);
+      cpu.set("A", 0x00); cpu.set("B", 0x05); // D=5
+      cpu.set("FLAGS", 0x01); // C=1
+      mem[0x1000] = 0x10; mem[0x1001] = 0x33; mem[0x1002] = 0x01; // SBCR D,X (src=D=0, dst=X=1)
+      cpu.singleStep();
+      // X = X - D - C = 16 - 5 - 1 = 10
+      assert.equal(cpu.status().x, 0x000A, "X = X - D - C = 10");
+    });
+  });
+
+  QUnit.module("$11 prefix: E/F 8-bit arithmetic", () => {
+    QUnit.test("LDE immediate ($11 $86)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x11; mem[0x1001] = 0x86; mem[0x1002] = 0x42;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x42, "E loaded from immediate");
+    });
+
+    QUnit.test("LDE direct ($11 $96)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("DP", 0x00); mem[0x0030] = 0x55;
+      mem[0x1000] = 0x11; mem[0x1001] = 0x96; mem[0x1002] = 0x30;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x55, "E loaded from direct page");
+    });
+
+    QUnit.test("LDE extended ($11 $B6)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x5000] = 0x99;
+      mem[0x1000] = 0x11; mem[0x1001] = 0xB6; mem[0x1002] = 0x50; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x99, "E loaded from extended address");
+    });
+
+    QUnit.test("STE direct ($11 $97)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0xAB); cpu.set("DP", 0x00);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x97; mem[0x1002] = 0x40;
+      cpu.singleStep();
+      assert.equal(mem[0x0040], 0xAB, "E stored to direct page");
+    });
+
+    QUnit.test("CMPE immediate ($11 $81) - Z set when equal", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x10);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x81; mem[0x1002] = 0x10;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when E = operand");
+    });
+
+    QUnit.test("SUBE immediate ($11 $80)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x0A);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x80; mem[0x1002] = 0x03;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x07, "E = E - 3 = 7");
+    });
+
+    QUnit.test("ADDE immediate ($11 $8B)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x05);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x8B; mem[0x1002] = 0x03;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x08, "E = E + 3 = 8");
+    });
+
+    QUnit.test("LDE sets Z when zero ($11 $86 #0)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x11; mem[0x1001] = 0x86; mem[0x1002] = 0x00;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when E = 0");
+    });
+
+    QUnit.test("LDF immediate ($11 $C6)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x11; mem[0x1001] = 0xC6; mem[0x1002] = 0x77;
+      cpu.singleStep();
+      assert.equal(cpu.status().f, 0x77, "F loaded from immediate");
+    });
+
+    QUnit.test("ADDE direct ($11 $9B)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x05); cpu.set("DP", 0x00); mem[0x0020] = 0x03;
+      mem[0x1000] = 0x11; mem[0x1001] = 0x9B; mem[0x1002] = 0x20;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x08, "E = E + mem[DP:20] = 5 + 3 = 8");
+    });
+
+    QUnit.test("SUBE extended ($11 $B0)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x0A); mem[0x5000] = 0x03;
+      mem[0x1000] = 0x11; mem[0x1001] = 0xB0; mem[0x1002] = 0x50; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0x07, "E = E - mem[5000] = 10 - 3 = 7");
+    });
+
+    QUnit.test("STF direct ($11 $D7)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0xCC); cpu.set("DP", 0x00);
+      mem[0x1000] = 0x11; mem[0x1001] = 0xD7; mem[0x1002] = 0x50;
+      cpu.singleStep();
+      assert.equal(mem[0x0050], 0xCC, "F stored to direct page");
+    });
+
+    QUnit.test("CMPF immediate ($11 $C1) - Z set when equal", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0x20);
+      mem[0x1000] = 0x11; mem[0x1001] = 0xC1; mem[0x1002] = 0x20;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z set when F = operand");
+    });
+
+    QUnit.test("SUBF immediate ($11 $C0)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0x08);
+      mem[0x1000] = 0x11; mem[0x1001] = 0xC0; mem[0x1002] = 0x03;
+      cpu.singleStep();
+      assert.equal(cpu.status().f, 0x05, "F = F - 3 = 5");
+    });
+
+    QUnit.test("ADDF immediate ($11 $CB)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("F", 0x04);
+      mem[0x1000] = 0x11; mem[0x1001] = 0xCB; mem[0x1002] = 0x06;
+      cpu.singleStep();
+      assert.equal(cpu.status().f, 0x0A, "F = F + 6 = 10");
+    });
+  });
+
+  QUnit.module("$11 prefix: bit ops and TFM", () => {
+    QUnit.test("LDBT loads memory bit to register bit ($11 $36)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("DP", 0x00); mem[0x0020] = 0x01; // bit 0 of mem[0x0020] = 1
+      // LDBT: copy mem bit 0 to A bit 0
+      // bpb: dst_bit=0, src_bit=0, reg=A(0) -> 0b 000 000 00 = 0x00
+      mem[0x1000] = 0x11; mem[0x1001] = 0x36; mem[0x1002] = 0x00; mem[0x1003] = 0x20;
+      cpu.singleStep();
+      assert.ok(cpu.status().a & 0x01, "bit 0 of A loaded from memory bit 0");
+    });
+
+    QUnit.test("STBT stores register bit to memory bit ($11 $37)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x01); // A bit 0 = 1
+      cpu.set("DP", 0x00); mem[0x0025] = 0x00;
+      // STBT: copy A bit 0 to mem bit 0
+      // bpb: dst_bit=0, src_bit=0, reg=A(0) -> 0x00
+      mem[0x1000] = 0x11; mem[0x1001] = 0x37; mem[0x1002] = 0x00; mem[0x1003] = 0x25;
+      cpu.singleStep();
+      assert.ok(mem[0x0025] & 0x01, "memory bit 0 set from A bit 0");
+    });
+
+    QUnit.test("BAND A bit 0 with memory bit 0 ($11 $30)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0xFF); // A bit 0 = 1
+      cpu.set("DP", 0x00); mem[0x0030] = 0x01; // mem bit 0 = 1
+      // BAND: A bit 0 = A bit 0 AND mem bit 0
+      mem[0x1000] = 0x11; mem[0x1001] = 0x30; mem[0x1002] = 0x00; mem[0x1003] = 0x30;
+      cpu.singleStep();
+      assert.ok(cpu.status().a & 0x01, "A bit 0 = 1 AND 1 = 1");
+    });
+
+    QUnit.test("BOR A bit 0 with memory bit 0 ($11 $32)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); // A bit 0 = 0
+      cpu.set("DP", 0x00); mem[0x0031] = 0x01; // mem bit 0 = 1
+      // BOR: A bit 0 = A bit 0 OR mem bit 0 = 0 OR 1 = 1
+      mem[0x1000] = 0x11; mem[0x1001] = 0x32; mem[0x1002] = 0x00; mem[0x1003] = 0x31;
+      cpu.singleStep();
+      assert.ok(cpu.status().a & 0x01, "A bit 0 = 0 OR 1 = 1");
+    });
+
+    QUnit.test("BEOR A bit 0 with memory bit 0 ($11 $34)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x01); // A bit 0 = 1
+      cpu.set("DP", 0x00); mem[0x0032] = 0x01; // mem bit 0 = 1
+      // BEOR: A bit 0 = A bit 0 XOR mem bit 0 = 1 XOR 1 = 0
+      mem[0x1000] = 0x11; mem[0x1001] = 0x34; mem[0x1002] = 0x00; mem[0x1003] = 0x32;
+      cpu.singleStep();
+      assert.equal(cpu.status().a & 0x01, 0, "A bit 0 = 1 XOR 1 = 0");
+    });
+
+    QUnit.test("TFM X+Y+ transfers bytes ($11 $38)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      // Transfer 3 bytes from X to Y
+      mem[0x3000] = 0xAA; mem[0x3001] = 0xBB; mem[0x3002] = 0xCC;
+      cpu.set("X", 0x3000); cpu.set("Y", 0x4000);
+      // W is the count register - set W=3 via E and F
+      cpu.set("E", 0x00); cpu.set("F", 0x03);
+      mem[0x1000] = 0x11; mem[0x1001] = 0x38; mem[0x1002] = 0x12; // TFM X+Y+ (src=X=1, dst=Y=2)
+      cpu.singleStep();
+      assert.equal(mem[0x4000], 0xAA, "byte 0 transferred");
+      assert.equal(mem[0x4001], 0xBB, "byte 1 transferred");
+      assert.equal(mem[0x4002], 0xCC, "byte 2 transferred");
+    });
+
+    QUnit.test("TFM X-Y- transfers bytes in decrement mode ($11 $39)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x3002] = 0xDD;
+      cpu.set("X", 0x3002); cpu.set("Y", 0x4002);
+      cpu.set("E", 0x00); cpu.set("F", 0x01); // W=1
+      mem[0x1000] = 0x11; mem[0x1001] = 0x39; mem[0x1002] = 0x12; // TFM X-Y-
+      cpu.singleStep();
+      assert.equal(mem[0x4002], 0xDD, "byte transferred in decrement mode");
+    });
+
+    QUnit.test("TFM X+Y transfers from X (increment), to fixed Y ($11 $3A)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x3000] = 0xEE;
+      cpu.set("X", 0x3000); cpu.set("Y", 0x5000);
+      cpu.set("E", 0x00); cpu.set("F", 0x01); // W=1
+      mem[0x1000] = 0x11; mem[0x1001] = 0x3A; mem[0x1002] = 0x12; // TFM X+Y
+      cpu.singleStep();
+      assert.equal(mem[0x5000], 0xEE, "byte transferred with src increment");
+    });
+
+    QUnit.test("TFM XY+ transfers to Y (increment), from fixed X ($11 $3B)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x3000] = 0xFF;
+      cpu.set("X", 0x3000); cpu.set("Y", 0x6000);
+      cpu.set("E", 0x00); cpu.set("F", 0x01); // W=1
+      mem[0x1000] = 0x11; mem[0x1001] = 0x3B; mem[0x1002] = 0x12; // TFM XY+
+      cpu.singleStep();
+      assert.equal(mem[0x6000], 0xFF, "byte transferred with dst increment");
+    });
+  });
+
+  QUnit.module("$10 prefix: W register ops", () => {
+    QUnit.test("PSHSW pushes W (E:F) onto S stack ($10 $38)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x12); cpu.set("F", 0x34);
+      cpu.set("SP", 0x0200);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x38;
+      cpu.singleStep();
+      assert.equal(cpu.status().sp, 0x01FE, "SP decremented by 2");
+      assert.equal((mem[0x01FE] << 8) | mem[0x01FF], 0x1234, "W=E:F stored on stack");
+    });
+
+    QUnit.test("PULSW pulls W from S stack ($10 $39)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FE] = 0xAB; mem[0x01FF] = 0xCD;
+      cpu.set("SP", 0x01FE);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x39;
+      cpu.singleStep();
+      assert.equal(cpu.status().w, 0xABCD, "W pulled from S stack");
+      assert.equal(cpu.status().sp, 0x0200, "SP incremented by 2");
+    });
+
+    QUnit.test("PSHUW pushes W onto U stack ($10 $3A)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("E", 0x56); cpu.set("F", 0x78);
+      cpu.set("U", 0x0200);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x3A;
+      cpu.singleStep();
+      assert.equal(cpu.status().u, 0x01FE, "U decremented by 2");
+    });
+
+    QUnit.test("PULUW pulls W from U stack ($10 $3B)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x01FE] = 0xDE; mem[0x01FF] = 0xAD;
+      cpu.set("U", 0x01FE);
+      mem[0x1000] = 0x10; mem[0x1001] = 0x3B;
+      cpu.singleStep();
+      assert.equal(cpu.status().w, 0xDEAD, "W pulled from U stack");
+    });
+  });
 });
