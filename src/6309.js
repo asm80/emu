@@ -1685,8 +1685,9 @@ const step = () => {
       }
 
       // Nibble D: JSR/BSR (A-side) or STD (B-side, no imm)
+      // 0xCD is LDQ immediate (6309) — handled below in switch
       // NOTE: STD sets only ~F_OVERFLOW — preserving original behavior (no flagsNZ16 call)
-      if (lo === 0xD) {
+      if (lo === 0xD && !(isB && mode === 0)) {
         if (isB) {
           if (mode !== 0) {
             addr = mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16();
@@ -1991,14 +1992,8 @@ const step = () => {
             const readVal = () => mode === 0 ? fetch16()
               : ReadWord(mode === 1 ? dpadd() : mode === 2 ? PostByte() : fetch16());
 
-            if (lo === 3) {                            // CMPD (A-side only)
-              if (!isB) oCMP16(getD(), readVal());
-              return T - oldT;
-            }
-            if (lo === 0xC) {                          // CMPY (A-side only)
-              if (!isB) oCMP16(rY, readVal());
-              return T - oldT;
-            }
+            if (lo === 3 && !isB) { oCMP16(getD(), readVal()); return T - oldT; } // CMPD (A-side only)
+            if (lo === 0xC && !isB) { oCMP16(rY, readVal()); return T - oldT; } // CMPY (A-side only)
             if (lo === 0xE) {                          // LDY (A-side) or LDS (B-side)
               const val = readVal();
               if (isB) rS = val; else rY = val;
@@ -2313,8 +2308,8 @@ const step = () => {
             if (lo === 0xC) { oCMP16(rS, readVal()); return T - oldT; } // CMPS
           }
 
-          // E-register arithmetic ops ($11 $80-$BB)
-          if (opcode >= 0x80 && opcode <= 0xBB) {
+          // E-register arithmetic ops ($11 $80-$BB, lo=0-B only; lo=D/E/F are DIVD/DIVQ/MULD)
+          if (opcode >= 0x80 && opcode <= 0xBB && (opcode & 0xF) <= 0xB) {
             const lo = opcode & 0xF;
             const mode = (opcode >> 4) & 3;
             if (lo <= 0xB && lo !== 3 && lo !== 6 && lo !== 7) {
@@ -2554,17 +2549,17 @@ EXG, TFR 20
 */
 let ds = [
     [2, 1, "NEG"],
-    [1, 0, "???"],
-    [1, 0, "???"],
+    [3, 30, "OIM"],
+    [3, 30, "AIM"],
     [2, 1, "COM"],
     [2, 1, "LSR"],
-    [1, 0, "???"],
+    [3, 30, "EIM"],
     [2, 1, "ROR"],
     [2, 1, "ASR"],
     [2, 1, "LSL"],
     [2, 1, "ROL"],
     [2, 1, "DEC"],
-    [1, 0, "???"],
+    [3, 30, "TIM"],
     [2, 1, "INC"],
     [2, 1, "TST"],
     [2, 1, "JMP"],
@@ -2573,7 +2568,7 @@ let ds = [
     [1, 0, "Prefix"],
     [1, 2, "NOP"],
     [1, 2, "SYNC"],
-    [1, 0, "???"],
+    [1, 2, "SEXW"],
     [1, 0, "???"],
     [3, 3, "LBRA"],
     [3, 3, "LBSR"],
@@ -2758,7 +2753,7 @@ let ds = [
     [2, 4, "ORB"],
     [2, 4, "ADDB"],
     [3, 8, "LDD"],
-    [1, 0, "???"],
+    [5, 31, "LDQ"],
     [3, 8, "LDU"],
     [1, 0, "???"],
     [2, 1, "SUBB"],
@@ -2812,6 +2807,32 @@ let ds = [
   ];
 
 let ds11 = {
+    // Bit operations (DIRECT, special postbyte)
+    0x30: [4, 32, "BAND"], 0x31: [4, 32, "BIAND"], 0x32: [4, 32, "BOR"],  0x33: [4, 32, "BIOR"],
+    0x34: [4, 32, "BEOR"], 0x35: [4, 32, "BIEOR"], 0x36: [4, 32, "LDBT"], 0x37: [4, 32, "STBT"],
+    // TFM block transfer (postbyte encodes src/dst regs)
+    0x38: [3, 33, "TFM"], 0x39: [3, 33, "TFM"], 0x3a: [3, 33, "TFM"], 0x3b: [3, 33, "TFM"],
+    // MD register ops
+    0x3c: [3, 4, "BITMD"], 0x3d: [3, 4, "LDMD"],
+    // E-register unary
+    0x43: [2, 2, "COME"], 0x4a: [2, 2, "DECE"], 0x4c: [2, 2, "INCE"], 0x4d: [2, 2, "TSTE"], 0x4f: [2, 2, "CLRE"],
+    // F-register unary
+    0x53: [2, 2, "COMF"], 0x5a: [2, 2, "DECF"], 0x5c: [2, 2, "INCF"], 0x5d: [2, 2, "TSTF"], 0x5f: [2, 2, "CLRF"],
+    // E-register arithmetic
+    0x80: [3, 4, "SUBE"], 0x81: [3, 4, "CMPE"], 0x86: [3, 4, "LDE"],  0x8b: [3, 4, "ADDE"],
+    0x90: [3, 1, "SUBE"], 0x91: [3, 1, "CMPE"], 0x96: [3, 1, "LDE"],  0x97: [3, 1, "STE"],  0x9b: [3, 1, "ADDE"],
+    0xa0: [3, 6, "SUBE"], 0xa1: [3, 6, "CMPE"], 0xa6: [3, 6, "LDE"],  0xa7: [3, 6, "STE"],  0xab: [3, 6, "ADDE"],
+    0xb0: [4, 7, "SUBE"], 0xb1: [4, 7, "CMPE"], 0xb6: [4, 7, "LDE"],  0xb7: [4, 7, "STE"],  0xbb: [4, 7, "ADDE"],
+    // F-register arithmetic
+    0xc0: [3, 4, "SUBF"], 0xc1: [3, 4, "CMPF"], 0xc6: [3, 4, "LDF"],  0xcb: [3, 4, "ADDF"],
+    0xd0: [3, 1, "SUBF"], 0xd1: [3, 1, "CMPF"], 0xd6: [3, 1, "LDF"],  0xd7: [3, 1, "STF"],  0xdb: [3, 1, "ADDF"],
+    0xe0: [3, 6, "SUBF"], 0xe1: [3, 6, "CMPF"], 0xe6: [3, 6, "LDF"],  0xe7: [3, 6, "STF"],  0xeb: [3, 6, "ADDF"],
+    0xf0: [4, 7, "SUBF"], 0xf1: [4, 7, "CMPF"], 0xf6: [4, 7, "LDF"],  0xf7: [4, 7, "STF"],  0xfb: [4, 7, "ADDF"],
+    // MULD/DIVD/DIVQ
+    0x8f: [4, 8, "MULD"], 0x9f: [3, 1, "MULD"], 0xaf: [3, 6, "MULD"], 0xbf: [4, 7, "MULD"],
+    0x8d: [3, 4, "DIVD"], 0x9d: [3, 1, "DIVD"], 0xad: [3, 6, "DIVD"], 0xbd: [4, 7, "DIVD"],
+    0x8e: [4, 8, "DIVQ"], 0x9e: [3, 1, "DIVQ"], 0xae: [3, 6, "DIVQ"], 0xbe: [4, 7, "DIVQ"],
+    // Original 6809 $11 ops
     0x3f: [2, 2, "SWI3"],
     0x83: [4, 8, "CMPU"],
     0x8c: [4, 8, "CMPS"],
@@ -2824,6 +2845,34 @@ let ds11 = {
   };
 
 let ds10 = {
+    // 6309 inter-register ops
+    0x30: [3, 20, "ADDR"], 0x31: [3, 20, "ADCR"], 0x32: [3, 20, "SUBR"], 0x33: [3, 20, "SBCR"],
+    0x34: [3, 20, "ANDR"], 0x35: [3, 20, "ORR"],  0x36: [3, 20, "EORR"], 0x37: [3, 20, "CMPR"],
+    // 6309 stack W ops
+    0x38: [2, 2, "PSHSW"], 0x39: [2, 2, "PULSW"], 0x3a: [2, 2, "PSHUW"], 0x3b: [2, 2, "PULUW"],
+    // 6309 D-register unary ops
+    0x40: [2, 2, "NEGD"], 0x43: [2, 2, "COMD"], 0x44: [2, 2, "LSRD"], 0x46: [2, 2, "RORD"],
+    0x47: [2, 2, "ASRD"], 0x48: [2, 2, "ASLD"], 0x49: [2, 2, "ROLD"], 0x4a: [2, 2, "DECD"],
+    0x4c: [2, 2, "INCD"], 0x4d: [2, 2, "TSTD"], 0x4f: [2, 2, "CLRD"],
+    // 6309 W-register unary ops
+    0x53: [2, 2, "COMW"], 0x54: [2, 2, "LSRW"], 0x56: [2, 2, "RORW"], 0x59: [2, 2, "ROLW"],
+    0x5a: [2, 2, "DECW"], 0x5c: [2, 2, "INCW"], 0x5d: [2, 2, "TSTW"], 0x5f: [2, 2, "CLRW"],
+    // 6309 W 16-bit arithmetic (imm/direct/indexed/extended)
+    0x80: [4, 8, "SUBW"], 0x90: [3, 1, "SUBW"], 0xa0: [3, 6, "SUBW"], 0xb0: [4, 7, "SUBW"],
+    0x81: [4, 8, "CMPW"], 0x91: [3, 1, "CMPW"], 0xa1: [3, 6, "CMPW"], 0xb1: [4, 7, "CMPW"],
+    0x82: [4, 8, "SBCD"], 0x92: [3, 1, "SBCD"], 0xa2: [3, 6, "SBCD"], 0xb2: [4, 7, "SBCD"],
+    0x84: [4, 8, "ANDD"], 0x94: [3, 1, "ANDD"], 0xa4: [3, 6, "ANDD"], 0xb4: [4, 7, "ANDD"],
+    0x85: [4, 8, "BITD"], 0x95: [3, 1, "BITD"], 0xa5: [3, 6, "BITD"], 0xb5: [4, 7, "BITD"],
+    0x86: [4, 8, "LDW"],  0x96: [3, 1, "LDW"],  0xa6: [3, 6, "LDW"],  0xb6: [4, 7, "LDW"],
+                          0x97: [3, 1, "STW"],  0xa7: [3, 6, "STW"],  0xb7: [4, 7, "STW"],
+    0x88: [4, 8, "EORD"], 0x98: [3, 1, "EORD"], 0xa8: [3, 6, "EORD"], 0xb8: [4, 7, "EORD"],
+    0x89: [4, 8, "ADCD"], 0x99: [3, 1, "ADCD"], 0xa9: [3, 6, "ADCD"], 0xb9: [4, 7, "ADCD"],
+    0x8a: [4, 8, "ORD"],  0x9a: [3, 1, "ORD"],  0xaa: [3, 6, "ORD"],  0xba: [4, 7, "ORD"],
+    0x8b: [4, 8, "ADDW"], 0x9b: [3, 1, "ADDW"], 0xab: [3, 6, "ADDW"], 0xbb: [4, 7, "ADDW"],
+    // 6309 LDQ/STQ (direct/indexed/extended via $10 prefix)
+    0xdc: [3, 1, "LDQ"], 0xec: [3, 6, "LDQ"], 0xfc: [4, 7, "LDQ"],
+    0xdd: [3, 1, "STQ"], 0xed: [3, 6, "STQ"], 0xfd: [4, 7, "STQ"],
+    // 6809 long branches
     0x21: [5, 3, "LBRN"],
     0x22: [5, 3, "LBHI"],
     0x23: [5, 3, "LBLS"],
@@ -3096,27 +3145,34 @@ export const disasm = function (i, a, b, c, d, pc) {
         }
         mnemo += " " + ro.join(",");
         break;
-      case 20: //TFR etc
-        rx = [
-          "D",
-          "X",
-          "Y",
-          "U",
-          "S",
-          "PC",
-          "?",
-          "?",
-          "A",
-          "B",
-          "CC",
-          "DP",
-          "?",
-          "?",
-          "?",
-          "?",
-        ];
+      case 20: //TFR/EXG with 6309 extended register names
+        rx = ["D","X","Y","U","S","PC","W","V","A","B","CC","DP","0","0","E","F"];
         mnemo += " " + rx[a >> 4] + "," + rx[a & 0x0f];
         break;
+      case 30: // OIM/AIM/EIM/TIM: #imm,direct
+        mnemo += " #$" + toHex2(a) + ",$" + toHex2(b);
+        break;
+      case 31: // LDQ imm32
+        mnemo += " #$" + toHex2(a) + toHex2(b) + toHex2(c) + toHex2(d);
+        break;
+      case 32: { // Bit ops: dstBit,reg,srcBit,$direct
+        const bitRegs = ["A","B","CC","?"];
+        const dstBit = (a >> 5) & 7;
+        const srcBit = (a >> 2) & 7;
+        const bitReg = a & 3;
+        mnemo += " " + dstBit + "," + bitRegs[bitReg] + "," + srcBit + ",$" + toHex2(b);
+        break;
+      }
+      case 33: { // TFM r+,r+ / r-,r- / r+,r / r,r+
+        const tfmNames = ["D","X","Y","U","S"];
+        const r0name = tfmNames[a >> 4] || "?";
+        const r1name = tfmNames[a & 0xf] || "?";
+        const tfmMode = i & 3; // 0=++, 1=--, 2=+fixed, 3=fixed+
+        const suf0 = tfmMode === 0 ? "+" : tfmMode === 1 ? "-" : tfmMode === 2 ? "+" : "";
+        const suf1 = tfmMode === 0 ? "+" : tfmMode === 1 ? "-" : tfmMode === 2 ? "" : "+";
+        mnemo += " " + r0name + suf0 + "," + r1name + suf1;
+        break;
+      }
     }
 
     return [mnemo, bytes];

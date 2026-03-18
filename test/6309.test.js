@@ -748,6 +748,57 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
     });
   });
 
+  QUnit.module("Disassembler", () => {
+    QUnit.test("OIM direct disassembles correctly", (assert) => {
+      const { cpu } = createTestCPU();
+      const [mnem, len] = cpu.disasm(0x01, 0xF0, 0x50);
+      assert.equal(mnem, "OIM #$F0,$50", "OIM direct mnemonic");
+      assert.equal(len, 3, "3 bytes");
+    });
+
+    QUnit.test("SEXW disassembles", (assert) => {
+      const { cpu } = createTestCPU();
+      const [mnem, len] = cpu.disasm(0x14);
+      assert.equal(mnem, "SEXW", "SEXW mnemonic");
+      assert.equal(len, 1, "1 byte");
+    });
+
+    QUnit.test("LDQ immediate disassembles", (assert) => {
+      const { cpu } = createTestCPU();
+      const [mnem, len] = cpu.disasm(0xCD, 0x11, 0x22, 0x33, 0x44);
+      assert.equal(mnem, "LDQ #$11223344", "LDQ imm mnemonic");
+      assert.equal(len, 5, "5 bytes");
+    });
+
+    QUnit.test("$10 $30 ADDR disassembles", (assert) => {
+      const { cpu } = createTestCPU();
+      const [mnem, len] = cpu.disasm(0x10, 0x30, 0x01);
+      assert.equal(mnem, "ADDR D,X", "ADDR mnemonic with registers");
+      assert.equal(len, 3, "3 bytes");
+    });
+
+    QUnit.test("$11 $3D LDMD disassembles", (assert) => {
+      const { cpu } = createTestCPU();
+      const [mnem, len] = cpu.disasm(0x11, 0x3D, 0x01);
+      assert.equal(mnem, "LDMD #$01", "LDMD mnemonic");
+      assert.equal(len, 3, "3 bytes");
+    });
+
+    QUnit.test("$11 $38 TFM disassembles", (assert) => {
+      const { cpu } = createTestCPU();
+      const [mnem, len] = cpu.disasm(0x11, 0x38, 0x12);
+      assert.equal(mnem, "TFM X+,Y+", "TFM r+,r+ mnemonic");
+      assert.equal(len, 3, "3 bytes");
+    });
+
+    QUnit.test("Unknown opcode returns ???", (assert) => {
+      const { cpu } = createTestCPU();
+      const [mnem, len] = cpu.disasm(0x87);
+      assert.equal(mnem, "???", "unknown opcode");
+      assert.equal(len, 1, "1 byte");
+    });
+  });
+
   QUnit.module("Trap System", () => {
     QUnit.test("Illegal opcode triggers trap via $FFF0 vector", (assert) => {
       const { cpu, mem } = createTestCPU();
