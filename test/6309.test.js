@@ -250,14 +250,14 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       cpu.interrupt();
 
       const s = cpu.status().sp;
-      // Stack from high to low: CC, A, B, E, F, DP, Xhi, Xlo, Yhi, Ylo, Uhi, Ulo, PChi, PClo
-      // S points to lowest address (PClo), so:
-      // mem[s+13]=CC, mem[s+12]=A, mem[s+11]=B, mem[s+10]=E, mem[s+9]=F, mem[s+8]=DP
-      assert.equal(mem[s + 12], 0x11, "A on stack at s+12");
-      assert.equal(mem[s + 11], 0x22, "B on stack at s+11");
-      assert.equal(mem[s + 10], 0x33, "E on stack at s+10 (between B and DP)");
-      assert.equal(mem[s + 9], 0x44, "F on stack at s+9");
-      assert.equal(mem[s + 8], 0x55, "DP on stack at s+8");
+      // Push order (last pushed = lowest addr): PClo,PChi,Ulo,Uhi,Ylo,Yhi,Xlo,Xhi,DP,F,E,B,A,CC
+      // S points to CC (last pushed). Layout from S:
+      // mem[s]=CC, mem[s+1]=A, mem[s+2]=B, mem[s+3]=E, mem[s+4]=F, mem[s+5]=DP
+      assert.equal(mem[s + 1], 0x11, "A on stack at s+1");
+      assert.equal(mem[s + 2], 0x22, "B on stack at s+2");
+      assert.equal(mem[s + 3], 0x33, "E on stack at s+3 (between B and DP)");
+      assert.equal(mem[s + 4], 0x44, "F on stack at s+4");
+      assert.equal(mem[s + 5], 0x55, "DP on stack at s+5");
     });
 
     QUnit.test("RTI in native mode restores E and F", (assert) => {
