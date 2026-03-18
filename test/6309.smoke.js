@@ -20,18 +20,23 @@ const makeCPU = (mem) => CPU6309({
   byteAt: (addr) => mem[addr],
 });
 
-QUnit.test("Module loads and initializes", (assert) => {
+QUnit.test("Module loads and exposes 6309 API", (assert) => {
   const mem = new Uint8Array(0x10000);
   const cpu = makeCPU(mem);
   assert.ok(cpu, "CPU factory returns object");
   assert.ok(cpu.reset, "reset method exists");
   assert.ok(cpu.steps, "steps method exists");
   assert.ok(cpu.status, "status method exists");
+  assert.ok(cpu.singleStep, "singleStep method exists");
   assert.ok(cpu.interrupt, "interrupt method exists");
   assert.ok(cpu.nmi, "nmi method exists");
   assert.ok(cpu.set, "set method exists");
   assert.ok(cpu.flagsToString, "flagsToString method exists");
   assert.ok(cpu.disasm, "disasm method exists");
+  assert.ok("e" in cpu.status(), "status has E register");
+  assert.ok("f" in cpu.status(), "status has F register");
+  assert.ok("v" in cpu.status(), "status has V register");
+  assert.ok("md" in cpu.status(), "status has MD register");
 });
 
 QUnit.test("Reset initializes CPU properly", (assert) => {
