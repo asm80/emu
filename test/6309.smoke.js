@@ -1,5 +1,5 @@
 /**
- * Smoke tests for Motorola 6809 CPU emulator
+ * Smoke tests for Hitachi HD6309 CPU emulator
  *
  * Tests critical functionality:
  * - Module loading
