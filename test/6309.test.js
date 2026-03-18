@@ -1488,4 +1488,191 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.equal(cpu.status().pc, 0x1004, "LBRN never branches");
     });
   });
+
+  QUnit.module("Base instructions: LEAX/LEAY/RTI/MUL/RMW/short-branches", () => {
+    QUnit.test("LEAX result=0 sets Z flag (0x30)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x0000);
+      mem[0x1000] = 0x30; mem[0x1001] = 0x84; // LEAX ,X (pb=0x84: ,X case 4)
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z flag set when LEAX result = 0");
+    });
+
+    QUnit.test("LEAX result≠0 clears Z flag", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x1234);
+      mem[0x1000] = 0x30; mem[0x1001] = 0x84; // LEAX ,X
+      cpu.singleStep();
+      assert.equal(cpu.status().flags & 0x04, 0, "Z flag clear when LEAX result ≠ 0");
+      assert.equal(cpu.status().x, 0x1234, "X unchanged");
+    });
+
+    QUnit.test("LEAY result=0 sets Z flag (0x31)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("Y", 0x0000);
+      mem[0x1000] = 0x31; mem[0x1001] = 0xA4; // LEAY ,Y (pb=0xA4)
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z flag set when LEAY result = 0");
+    });
+
+    QUnit.test("RTI without F_ENTIRE only pulls CC and PC", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      // Stack: CC(no F_ENTIRE), PC=0x2000
+      cpu.set("SP", 0x01FD);
+      mem[0x01FD] = 0x00; // CC (no F_ENTIRE bit 0x80)
+      mem[0x01FE] = 0x20; mem[0x01FF] = 0x00; // PC = 0x2000
+      mem[0x1000] = 0x3B; // RTI
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x2000, "PC restored to 0x2000");
+      assert.equal(cpu.status().sp, 0x0200, "SP advanced by 3");
+    });
+
+    QUnit.test("RTI with F_ENTIRE pulls full register set", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      // Full stack: CC(0x80), A, B, DP, X(2), Y(2), U(2), PC(2) = 12 bytes
+      cpu.set("SP", 0x01F4);
+      mem[0x01F4] = 0x80; // CC with F_ENTIRE
+      mem[0x01F5] = 0x11; // A
+      mem[0x01F6] = 0x22; // B
+      mem[0x01F7] = 0x05; // DP
+      mem[0x01F8] = 0x12; mem[0x01F9] = 0x34; // X
+      mem[0x01FA] = 0x56; mem[0x01FB] = 0x78; // Y
+      mem[0x01FC] = 0x9A; mem[0x01FD] = 0xBC; // U
+      mem[0x01FE] = 0x30; mem[0x01FF] = 0x00; // PC = 0x3000
+      mem[0x1000] = 0x3B;
+      cpu.singleStep();
+      assert.equal(cpu.status().a, 0x11, "A restored");
+      assert.equal(cpu.status().b, 0x22, "B restored");
+      assert.equal(cpu.status().pc, 0x3000, "PC restored to 0x3000");
+    });
+
+    QUnit.test("RTI in native mode additionally restores E and F", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      // Enable native mode
+      mem[0x1000] = 0x11; mem[0x1001] = 0x3D; mem[0x1002] = 0x01; // LDMD #1
+      cpu.singleStep(); // PC now at 0x1003
+      // Native RTI stack: CC(0x80), A, B, E, F, DP, X(2), Y(2), U(2), PC(2) = 14 bytes
+      cpu.set("SP", 0x01F2);
+      mem[0x01F2] = 0x80; // CC (F_ENTIRE)
+      mem[0x01F3] = 0xAA; // A
+      mem[0x01F4] = 0xBB; // B
+      mem[0x01F5] = 0xDD; // E (pulled first by RTI)
+      mem[0x01F6] = 0xCC; // F (pulled second by RTI)
+      mem[0x01F7] = 0x00; // DP
+      mem[0x01F8] = 0x00; mem[0x01F9] = 0x00; // X
+      mem[0x01FA] = 0x00; mem[0x01FB] = 0x00; // Y
+      mem[0x01FC] = 0x00; mem[0x01FD] = 0x00; // U
+      mem[0x01FE] = 0x20; mem[0x01FF] = 0x00; // PC = 0x2000
+      mem[0x1003] = 0x3B; // RTI at new PC
+      cpu.singleStep();
+      assert.equal(cpu.status().e, 0xDD, "E restored from stack in native mode");
+      assert.equal(cpu.status().f, 0xCC, "F restored from stack in native mode");
+    });
+
+    QUnit.test("MUL result=0 sets Z flag (0x3D)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x00); cpu.set("B", 0x05);
+      mem[0x1000] = 0x3D; // MUL
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x04, "Z flag set when A*B=0");
+    });
+
+    QUnit.test("MUL result has bit7 set → carry flag set", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x01); cpu.set("B", 0x80); // 1*128=128=0x80, bit7=1
+      mem[0x1000] = 0x3D;
+      cpu.singleStep();
+      assert.ok(cpu.status().flags & 0x01, "C flag set when bit7 of result=1");
+    });
+
+    QUnit.test("MUL result bit7 clear → carry flag clear", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("A", 0x02); cpu.set("B", 0x02); // result=4, bit7=0
+      mem[0x1000] = 0x3D;
+      cpu.singleStep();
+      assert.equal(cpu.status().flags & 0x01, 0, "C flag clear when bit7 of result=0");
+    });
+
+    QUnit.test("OIM indexed — OR immediate with memory (0x61)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x3000); mem[0x3000] = 0x0F;
+      // OIM indexed: opcode=0x61, imm byte, then postbyte
+      mem[0x1000] = 0x61; mem[0x1001] = 0xF0; mem[0x1002] = 0x84; // OIM imm=$F0 ,X
+      cpu.singleStep();
+      assert.equal(mem[0x3000], 0xFF, "memory ORed with immediate");
+    });
+
+    QUnit.test("AIM indexed — AND immediate with memory (0x62)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x3000); mem[0x3000] = 0xFF;
+      mem[0x1000] = 0x62; mem[0x1001] = 0x0F; mem[0x1002] = 0x84; // AIM imm=$0F ,X
+      cpu.singleStep();
+      assert.equal(mem[0x3000], 0x0F, "memory ANDed with immediate");
+    });
+
+    QUnit.test("EIM indexed — XOR immediate with memory (0x65)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x3000); mem[0x3000] = 0xAA;
+      mem[0x1000] = 0x65; mem[0x1001] = 0xFF; mem[0x1002] = 0x84;
+      cpu.singleStep();
+      assert.equal(mem[0x3000], 0x55, "memory XORed with immediate");
+    });
+
+    QUnit.test("TIM indexed — test bits in memory, no write (0x6B)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("X", 0x3000); mem[0x3000] = 0x0F;
+      mem[0x1000] = 0x6B; mem[0x1001] = 0xF0; mem[0x1002] = 0x84; // TIM: AND but no store
+      cpu.singleStep();
+      assert.equal(mem[0x3000], 0x0F, "TIM does not modify memory");
+      assert.ok(cpu.status().flags & 0x04, "Z flag set (result of AND = 0)");
+    });
+
+    QUnit.test("OIM extended — OR immediate with extended memory (0x71)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x5000] = 0x03;
+      mem[0x1000] = 0x71; mem[0x1001] = 0x0C; mem[0x1002] = 0x50; mem[0x1003] = 0x00;
+      cpu.singleStep();
+      assert.equal(mem[0x5000], 0x0F, "memory ORed in extended mode");
+    });
+
+    QUnit.test("BLT not taken when N=V (0x2D)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00); // N=0, V=0: N xor V = 0 → not taken
+      mem[0x1000] = 0x2D; mem[0x1001] = 0x10;
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1002, "BLT not taken when N=V");
+    });
+
+    QUnit.test("BLT taken when N≠V (0x2D)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x08); // N=1, V=0
+      mem[0x1000] = 0x2D; mem[0x1001] = 0x10;
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1012, "BLT taken when N≠V");
+    });
+
+    QUnit.test("BGT not taken when Z=1 (0x2E)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x04); // Z=1 → not taken
+      mem[0x1000] = 0x2E; mem[0x1001] = 0x10;
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1002, "BGT not taken when Z=1");
+    });
+
+    QUnit.test("BLE taken when Z=1 (0x2F)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x04); // Z=1 → taken
+      mem[0x1000] = 0x2F; mem[0x1001] = 0x10;
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1012, "BLE taken when Z=1");
+    });
+
+    QUnit.test("BLE not taken when Z=0 and N=V (0x2F)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("FLAGS", 0x00); // Z=0, N=0, V=0 → not taken
+      mem[0x1000] = 0x2F; mem[0x1001] = 0x10;
+      cpu.singleStep();
+      assert.equal(cpu.status().pc, 0x1002, "BLE not taken when Z=0, N=V");
+    });
+  });
 });
