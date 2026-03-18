@@ -158,4 +158,52 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.equal(cpu.status().f, 0x42, "F = E");
     });
   });
+
+  QUnit.module("Native Mode Timing", () => {
+    QUnit.test("MD bit 0 = 0 means emulation mode by default", (assert) => {
+      const { cpu } = createTestCPU();
+      assert.equal(cpu.status().md & 1, 0, "emulation mode by default");
+    });
+
+    QUnit.test("NOP takes 2 cycles emulation, 1 cycle native", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x12; // NOP
+
+      const t0 = cpu.T();
+      cpu.singleStep();
+      const emulCycles = cpu.T() - t0;
+      assert.equal(emulCycles, 2, "NOP = 2 cycles in emulation mode");
+
+      // Switch to native mode
+      cpu.set("MD", 1);
+      cpu.set("PC", 0x1000);
+      const t1 = cpu.T();
+      cpu.singleStep();
+      const nativeCycles = cpu.T() - t1;
+      assert.equal(nativeCycles, 1, "NOP = 1 cycle in native mode");
+    });
+
+    QUnit.test("NEG direct takes 6 cycles emulation, 5 native", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0x1000] = 0x00; // NEG direct
+      mem[0x1001] = 0x50; // operand at $0050
+      mem[0x0050] = 0x01;
+      cpu.set("DP", 0x00);
+
+      const t0 = cpu.T();
+      cpu.singleStep();
+      assert.equal(cpu.T() - t0, 6, "NEG direct = 6 cycles emulation");
+
+      // Reset and try native
+      cpu.set("MD", 1);
+      mem[0x1000] = 0x00;
+      mem[0x1001] = 0x50;
+      mem[0x0050] = 0x01;
+      cpu.set("PC", 0x1000);
+      cpu.set("DP", 0x00);
+      const t1 = cpu.T();
+      cpu.singleStep();
+      assert.equal(cpu.T() - t1, 5, "NEG direct = 5 cycles native");
+    });
+  });
 });

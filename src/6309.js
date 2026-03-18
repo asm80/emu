@@ -299,6 +299,30 @@ let cycles = [
     6,
   ]; /* F0-FF */
 
+// Helper: true when HD6309 is running in native mode (MD bit 0 = 1)
+const isNative = () => (rMD & 1) !== 0;
+
+// Native mode timing for page 0 (from parenthesized values in docs/6309/6309.txt sec 6.1)
+// Entries without parenthesized values use same count as emulation mode
+const cyclesNative = [
+  5, 6, 6, 5, 5, 6, 5, 5, 5, 5, 5, 6, 5, 4, 2, 5 /* 00-0F */,
+  0, 0, 1, 1, 0, 0, 4, 7, 0, 1, 2, 0, 3, 1, 5, 4 /* 10-1F */,
+  3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3 /* 20-2F */,
+  4, 4, 4, 4, 4, 4, 4, 4, 0, 4, 3, 17, 20, 10, 7, 21 /* 30-3F: RTI=17, SWI=21 */,
+  1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1 /* 40-4F */,
+  1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1 /* 50-5F */,
+  6, 0, 0, 6, 6, 0, 6, 6, 6, 6, 6, 0, 6, 5, 3, 6 /* 60-6F */,
+  6, 0, 0, 6, 6, 0, 6, 6, 6, 6, 6, 0, 6, 5, 3, 6 /* 70-7F */,
+  2, 2, 2, 3, 2, 2, 2, 0, 2, 2, 2, 2, 3, 6, 3, 0 /* 80-8F */,
+  3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 4, 6, 4, 4 /* 90-9F */,
+  4, 4, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 5, 6, 5, 5 /* A0-AF */,
+  4, 4, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 5, 7, 5, 5 /* B0-BF */,
+  2, 2, 2, 3, 2, 2, 2, 0, 2, 2, 2, 2, 3, 0, 3, 0 /* C0-CF */,
+  3, 3, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4 /* D0-DF */,
+  4, 4, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5 /* E0-EF */,
+  5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5 /* F0-FF */,
+];
+
   /* Instruction timing for the two-byte opcodes */
 let cycles2 = [
     0,
@@ -1550,7 +1574,7 @@ const step = () => {
 
     const oldPC = PC;
     let opcode = fetch();
-    T += cycles[opcode];
+    T += isNative() ? cyclesNative[opcode] : cycles[opcode];
 
     // Binary 8-bit ALU: A-reg (0x80-0xBF) or B-reg (0xC0-0xFF)
     // Handles parallel nibbles: 0,1,2,4,5,6,7,8,9,A,B
@@ -2875,5 +2899,6 @@ export default (callbacks) => {
     set,
     flagsToString,
     disasm,
+    T: () => T,
   };
 };
