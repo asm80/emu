@@ -206,4 +206,82 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.equal(cpu.T() - t1, 5, "NEG direct = 5 cycles native");
     });
   });
+
+  QUnit.module("Native Mode Interrupt Stack", () => {
+    QUnit.test("IRQ in emulation mode pushes 12 bytes", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      mem[0xFFF8] = 0x20;
+      mem[0xFFF9] = 0x00;
+      cpu.set("SP", 0x0200);
+
+      const sBefore = cpu.status().sp;
+      cpu.interrupt();
+      const sAfter = cpu.status().sp;
+
+      assert.equal(sBefore - sAfter, 12, "emulation mode pushes 12 bytes");
+    });
+
+    QUnit.test("IRQ in native mode pushes 14 bytes (E and F added)", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("MD", 1);
+      mem[0xFFF8] = 0x20;
+      mem[0xFFF9] = 0x00;
+      cpu.set("SP", 0x0200);
+
+      const sBefore = cpu.status().sp;
+      cpu.interrupt();
+      const sAfter = cpu.status().sp;
+
+      assert.equal(sBefore - sAfter, 14, "native mode pushes 14 bytes");
+    });
+
+    QUnit.test("Native IRQ stack layout: E and F between B and DP", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("MD", 1);
+      cpu.set("A", 0x11);
+      cpu.set("B", 0x22);
+      cpu.set("E", 0x33);
+      cpu.set("F", 0x44);
+      cpu.set("DP", 0x55);
+      cpu.set("SP", 0x0200);
+      mem[0xFFF8] = 0x20;
+      mem[0xFFF9] = 0x00;
+
+      cpu.interrupt();
+
+      const s = cpu.status().sp;
+      // Stack from high to low: CC, A, B, E, F, DP, Xhi, Xlo, Yhi, Ylo, Uhi, Ulo, PChi, PClo
+      // S points to lowest address (PClo), so:
+      // mem[s+13]=CC, mem[s+12]=A, mem[s+11]=B, mem[s+10]=E, mem[s+9]=F, mem[s+8]=DP
+      assert.equal(mem[s + 12], 0x11, "A on stack at s+12");
+      assert.equal(mem[s + 11], 0x22, "B on stack at s+11");
+      assert.equal(mem[s + 10], 0x33, "E on stack at s+10 (between B and DP)");
+      assert.equal(mem[s + 9], 0x44, "F on stack at s+9");
+      assert.equal(mem[s + 8], 0x55, "DP on stack at s+8");
+    });
+
+    QUnit.test("RTI in native mode restores E and F", (assert) => {
+      const { cpu, mem } = createTestCPU();
+      cpu.set("MD", 1);
+      cpu.set("SP", 0x0200);
+      mem[0xFFF8] = 0x20;
+      mem[0xFFF9] = 0x00;
+
+      // Push known values via interrupt
+      cpu.set("E", 0xAB);
+      cpu.set("F", 0xCD);
+      cpu.interrupt();
+
+      // Clobber E and F
+      cpu.set("E", 0x00);
+      cpu.set("F", 0x00);
+
+      // RTI at IRQ handler address
+      mem[0x2000] = 0x3B; // RTI
+      cpu.singleStep();
+
+      assert.equal(cpu.status().e, 0xAB, "E restored by RTI");
+      assert.equal(cpu.status().f, 0xCD, "F restored by RTI");
+    });
+  });
 });

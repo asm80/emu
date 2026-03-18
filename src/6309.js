@@ -1872,9 +1872,13 @@ const step = () => {
       case 0x3b: //RTI
         CC = PULLB();
         if (CC & F_ENTIRE) {
-          T += 9;
+          T += isNative() ? 11 : 9;
           rA = PULLB();
           rB = PULLB();
+          if (isNative()) {
+            rE = PULLB();
+            rF = PULLB();
+          }
           DP = PULLB();
           rX = PULLW();
           rY = PULLW();
@@ -2754,11 +2758,6 @@ const status = () => ({
  * - Load PC from IRQ vector
  */
 const interrupt = () => {
-  // Check if interrupts are masked
-  if (CC & F_IRQMASK) {
-    return;
-  }
-
   // Set entire flag before pushing CC
   CC |= F_ENTIRE;
 
@@ -2768,6 +2767,10 @@ const interrupt = () => {
   PUSHW(rY);
   PUSHW(rX);
   PUSHB(DP);
+  if (isNative()) {
+    PUSHB(rF);
+    PUSHB(rE);
+  }
   PUSHB(rB);
   PUSHB(rA);
   PUSHB(CC);
@@ -2777,7 +2780,7 @@ const interrupt = () => {
 
   // Vector to IRQ handler
   PC = ReadWord(vecIRQ);
-  T += 19; // IRQ takes 19 cycles
+  T += isNative() ? 21 : 19;
 };
 
 /**
@@ -2802,6 +2805,10 @@ const nmi = () => {
   PUSHW(rY);
   PUSHW(rX);
   PUSHB(DP);
+  if (isNative()) {
+    PUSHB(rF);
+    PUSHB(rE);
+  }
   PUSHB(rB);
   PUSHB(rA);
   PUSHB(CC);
@@ -2811,7 +2818,7 @@ const nmi = () => {
 
   // Vector to NMI handler
   PC = ReadWord(vecNMI);
-  T += 19; // NMI takes 19 cycles
+  T += isNative() ? 21 : 19;
 };
 
 /**
