@@ -31,6 +31,7 @@ const vecIRQ = 0xfff8;
 const vecFIRQ = 0xfff6;
 const vecSWI2 = 0xfff4;
 const vecSWI3 = 0xfff2;
+const vecTRAP = 0xfff0;
 
 // Timing and interrupt state
 let ticks = null;
@@ -1562,6 +1563,30 @@ const UNARY_OPS = [oNEG, null, null, oCOM, oLSR, null, oROR, oASR,
 const BIN8_OPS = [oSUB, null, oSBC, null, oAND, null, null, null,
                   oEOR, oADC, oOR, oADD, null, null, null, null];
 
+/**
+ * Trigger a hardware trap (illegal opcode or division by zero).
+ * Sets the appropriate MD flag bit, pushes all registers, and vectors via $FFF0.
+ *
+ * @param {number} reason - 0x40 for illegal op, 0x80 for div by zero
+ */
+const trap = (reason) => {
+  rMD |= reason;
+  CC |= F_ENTIRE;
+  PUSHW(PC);
+  PUSHW(rU);
+  PUSHW(rY);
+  PUSHW(rX);
+  PUSHB(DP);
+  if (isNative()) {
+    PUSHB(rF);
+    PUSHB(rE);
+  }
+  PUSHB(rB);
+  PUSHB(rA);
+  PUSHB(CC);
+  PC = ReadWord(vecTRAP);
+};
+
 const step = () => {
     const oldT = T;
 
@@ -2063,6 +2088,11 @@ const step = () => {
               break;
           }
         }
+        break;
+
+      default:
+        // Illegal/undefined opcode — trigger trap via $FFF0
+        trap(0x40);
         break;
     }
 

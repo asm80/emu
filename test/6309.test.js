@@ -284,4 +284,37 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.equal(cpu.status().f, 0xCD, "F restored by RTI");
     });
   });
+
+  QUnit.module("Trap System", () => {
+    QUnit.test("Illegal opcode triggers trap via $FFF0 vector", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      // Set trap vector
+      mem[0xFFF0] = 0x30;
+      mem[0xFFF1] = 0x00;
+
+      // Place an undefined opcode at PC ($87 is illegal on both 6809 and 6309)
+      mem[0x1000] = 0x87;
+
+      cpu.singleStep();
+
+      assert.equal(cpu.status().pc, 0x3000, "PC jumped to trap vector");
+      assert.ok(cpu.status().md & 0x40, "MD bit 6 set (illegal op)");
+    });
+
+    QUnit.test("Trap pushes registers on S stack", (assert) => {
+      const { cpu, mem } = createTestCPU();
+
+      mem[0xFFF0] = 0x30;
+      mem[0xFFF1] = 0x00;
+      cpu.set("SP", 0x0200);
+
+      const sBefore = cpu.status().sp;
+      mem[0x1000] = 0x87; // illegal opcode
+      cpu.singleStep();
+
+      const sAfter = cpu.status().sp;
+      assert.ok(sBefore > sAfter, "S stack decreased (registers pushed)");
+    });
+  });
 });
