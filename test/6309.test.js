@@ -2006,4 +2006,247 @@ QUnit.module("Hitachi HD6309 CPU Emulator", () => {
       assert.ok(true, "DIVQ extended executed without crash");
     });
   });
+
+  QUnit.module("Disassembler $10/$11 prefix", () => {
+    QUnit.test("$10 $8E = LDY #imm (2+2 bytes)", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x8E, 0x12, 0x34);
+      assert.equal(m, "LDY #$1234", "mnemonic is LDY");
+      assert.equal(l, 4, "4 bytes total");
+    });
+
+    QUnit.test("$10 $9F = STY direct (2+1 bytes)", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x9F, 0x50);
+      assert.equal(m, "STY $50", "mnemonic is STY");
+      assert.equal(l, 3, "3 bytes");
+    });
+
+    QUnit.test("$10 $BE = LDY extended (2+2 bytes)", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0xBE, 0x30, 0x00);
+      assert.equal(m, "LDY $3000", "mnemonic is LDY (extended)");
+      assert.equal(l, 4, "4 bytes");
+    });
+
+    QUnit.test("$10 $CE = LDS #imm", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0xCE, 0x03, 0x00);
+      assert.equal(m, "LDS #$0300", "mnemonic is LDS");
+    });
+
+    QUnit.test("$10 $DF = STS direct", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0xDF, 0x50);
+      assert.equal(m, "STS $50", "mnemonic is STS");
+    });
+
+    QUnit.test("$10 $8C = CMPY #imm", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x8C, 0x12, 0x34);
+      assert.equal(m, "CMPY #$1234", "mnemonic is CMPY");
+    });
+
+    QUnit.test("$10 $83 = CMPD #imm", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x83, 0x12, 0x34);
+      assert.equal(m, "CMPD #$1234", "mnemonic is CMPD");
+    });
+
+    QUnit.test("$10 $27 = LBEQ (long branch)", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x27, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBEQ #$0010", "mnemonic is LBEQ");
+      assert.equal(l, 4, "4 bytes");
+    });
+
+    QUnit.test("$10 $16 = LBRA", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x16, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBRA #$0010", "mnemonic is LBRA");
+      assert.equal(l, 4, "4 bytes");
+    });
+
+    QUnit.test("$10 $26 = LBNE", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x26, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBNE #$0010", "mnemonic is LBNE");
+    });
+
+    QUnit.test("$10 $24 = LBCC", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x24, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBCC #$0010", "mnemonic is LBCC");
+    });
+
+    QUnit.test("$10 $25 = LBCS", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x25, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBCS #$0010", "mnemonic is LBCS");
+    });
+
+    QUnit.test("$10 $28 = LBVC", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x28, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBVC #$0010", "mnemonic is LBVC");
+    });
+
+    QUnit.test("$10 $29 = LBVS", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x29, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBVS #$0010", "mnemonic is LBVS");
+    });
+
+    QUnit.test("$10 $2A = LBPL", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x2A, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBPL #$0010", "mnemonic is LBPL");
+    });
+
+    QUnit.test("$10 $2B = LBMI", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x2B, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBMI #$0010", "mnemonic is LBMI");
+    });
+
+    QUnit.test("$10 $2C = LBGE", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x2C, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBGE #$0010", "mnemonic is LBGE");
+    });
+
+    QUnit.test("$10 $2D = LBLT", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x2D, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBLT #$0010", "mnemonic is LBLT");
+    });
+
+    QUnit.test("$10 $2E = LBGT", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x2E, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBGT #$0010", "mnemonic is LBGT");
+    });
+
+    QUnit.test("$10 $2F = LBLE", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x2F, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBLE #$0010", "mnemonic is LBLE");
+    });
+
+    QUnit.test("$10 $22 = LBHI", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x22, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBHI #$0010", "mnemonic is LBHI");
+    });
+
+    QUnit.test("$10 $23 = LBLS", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x23, 0x00, 0x10, 0, 0);
+      assert.equal(m, "LBLS #$0010", "mnemonic is LBLS");
+    });
+
+    QUnit.test("Unknown $10 opcode returns ['???', 2]", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x10, 0x01);
+      assert.equal(m, "???", "unknown $10 opcode returns ???");
+      assert.equal(l, 2, "length = 2");
+    });
+
+    QUnit.test("$11 $83 = CMPU #imm", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x83, 0x12, 0x34);
+      assert.equal(m, "CMPU #$1234", "mnemonic is CMPU");
+    });
+
+    QUnit.test("$11 $8C = CMPS #imm", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x8C, 0x12, 0x34);
+      assert.equal(m, "CMPS #$1234", "mnemonic is CMPS");
+    });
+
+    QUnit.test("$11 $43 = COME", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x43);
+      assert.equal(m, "COME", "mnemonic is COME");
+    });
+
+    QUnit.test("$11 $4A = DECE", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x4A);
+      assert.equal(m, "DECE", "mnemonic is DECE");
+    });
+
+    QUnit.test("$11 $4C = INCE", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x4C);
+      assert.equal(m, "INCE", "mnemonic is INCE");
+    });
+
+    QUnit.test("$11 $4D = TSTE", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x4D);
+      assert.equal(m, "TSTE", "mnemonic is TSTE");
+    });
+
+    QUnit.test("$11 $4F = CLRE", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x4F);
+      assert.equal(m, "CLRE", "mnemonic is CLRE");
+    });
+
+    QUnit.test("$11 $53 = COMF", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x53);
+      assert.equal(m, "COMF", "mnemonic is COMF");
+    });
+
+    QUnit.test("$11 $5A = DECF", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x5A);
+      assert.equal(m, "DECF", "mnemonic is DECF");
+    });
+
+    QUnit.test("$11 $5C = INCF", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x5C);
+      assert.equal(m, "INCF", "mnemonic is INCF");
+    });
+
+    QUnit.test("$11 $5D = TSTF", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x5D);
+      assert.equal(m, "TSTF", "mnemonic is TSTF");
+    });
+
+    QUnit.test("$11 $5F = CLRF", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x5F);
+      assert.equal(m, "CLRF", "mnemonic is CLRF");
+    });
+
+    QUnit.test("$11 $8F = MULD #imm", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x8F, 0x00, 0x04);
+      assert.equal(m, "MULD #$0004", "mnemonic is MULD");
+    });
+
+    QUnit.test("$11 $8D = DIVD #imm", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x8D, 0x03);
+      assert.equal(m, "DIVD #$03", "mnemonic is DIVD");
+    });
+
+    QUnit.test("$11 $8E = DIVQ #imm", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x8E, 0x00, 0x02);
+      assert.equal(m, "DIVQ #$0002", "mnemonic is DIVQ");
+    });
+
+    QUnit.test("Unknown $11 opcode returns ['???', 2]", (assert) => {
+      const { cpu } = createTestCPU();
+      const [m, l] = cpu.disasm(0x11, 0x01);
+      assert.equal(m, "???", "unknown $11 opcode returns ???");
+      assert.equal(l, 2, "length = 2");
+    });
+  });
 });
