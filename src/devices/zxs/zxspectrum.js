@@ -273,10 +273,11 @@ export const createZXS = (options = {}) => {
   const interruptPeriod = is128k ? INTERRUPT_PERIOD_128 : INTERRUPT_PERIOD_48;
   /**
    * T-states until the next ULA interrupt fires. Persists across frame() calls.
-   * Starts at 0 so the first interrupt fires immediately at the start of
-   * the first frame, matching the original hardware behaviour.
+   * Initialised to interruptPeriod so the first interrupt fires after one full
+   * period. loadSNA() resets this to 0 so the first frame after a snapshot load
+   * fires immediately, providing a consistent timing baseline.
    */
-  let interruptCounter = 0;
+  let interruptCounter = interruptPeriod;
 
   // ── Audio ─────────────────────────────────────────────────────────────────
 
@@ -566,7 +567,7 @@ export const createZXS = (options = {}) => {
       ram48.fill(0);
       ram128.fill(0);
       romBank = 0; ramBank = 0; screenBank = 5; pagingDisabled = false;
-      borderColor = 7; frameCount = 0; interruptCounter = 0;
+      borderColor = 7; frameCount = 0; interruptCounter = interruptPeriod;
       currentKeyMatrix = new Uint8Array(8);
       beeperState = 0; beeperStateAtFrameStart = 0; beeperEvents = []; frameBaseT = 0;
       tapeEdges = new Uint32Array(0); tapePos = 0; tapeT = 0; tapeSignal = 0; tapePlaying = false; tapeTBase = 0;
@@ -742,6 +743,10 @@ export const createZXS = (options = {}) => {
         }
       }
 
+      // Reset interrupt counter so the first interrupt fires at the start of
+      // the next frame (same semantics as reset()). This ensures a consistent
+      // timing baseline regardless of when the snapshot was saved.
+      interruptCounter = 0;
       initialized = true;
     },
 

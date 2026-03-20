@@ -434,12 +434,14 @@ QUnit.module("ZXS interrupt timing", () => {
 
     // Reference: 1 frame of exactly 69888 T-states → exactly 1 interrupt
     const zxsRef = createZXS({ model: "48k", sampleRate: 44100 });
+    zxsRef.reset();
     zxsRef.loadSNA(makeSNA());
     zxsRef.frame(69888, new Uint8Array(8));
     const refFrames = zxsRef.getRAM()[FRAMES_OFFSET];
 
     // Test: 3 frames of 23296 T-states each (sum = 69888)
     const zxs = createZXS({ model: "48k", sampleRate: 44100 });
+    zxs.reset();
     zxs.loadSNA(makeSNA());
     zxs.frame(23296, new Uint8Array(8));
     zxs.frame(23296, new Uint8Array(8));
