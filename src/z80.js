@@ -353,6 +353,8 @@ export default (callbacks) => {
    */
   const executeCBInstruction = () => {
     const opcode = fetchByte();
+    // CB prefix: the opcode byte is also an M1 fetch — increment R
+    regs[R_R] = ((regs[R_R] + 1) & 0x7F) | (regs[R_R] & 0x80);
 
     // Extract bit number and register from opcode pattern
     const bit = (opcode >> 3) & 0x07;
@@ -439,6 +441,8 @@ export default (callbacks) => {
    */
   const executeEDInstruction = () => {
     const opcode = fetchByte();
+    // ED prefix: the opcode byte is also an M1 fetch — increment R
+    regs[R_R] = ((regs[R_R] + 1) & 0x7F) | (regs[R_R] & 0x80);
 
     switch (opcode) {
       // Block load instructions
@@ -1082,6 +1086,8 @@ export default (callbacks) => {
    */
   const executeIndexedInstruction = (isIX) => {
     const opcode = fetchByte();
+    // DD/FD prefix: the opcode byte is also an M1 fetch — increment R
+    regs[R_R] = ((regs[R_R] + 1) & 0x7F) | (regs[R_R] & 0x80);
     const rpIndex = isIX ? RP_IX : RP_IY;
 
     // DD/FD CB instructions need special handling
@@ -1466,8 +1472,14 @@ export default (callbacks) => {
         break;
 
       default:
-        // For opcodes that don't use the index register, execute as normal
-        // but the prefix has already consumed 4 T-states
+        // For opcodes that don't use the index register, execute as normal.
+        // Account for the DD/FD prefix M1 cycle (4 T-states) here, since
+        // the recognized DD/FD instructions bake their prefix cost into their
+        // own T-state totals, but the default path delegates to executeInstruction().
+        // Also undo the R increment we did for this opcode fetch — executeInstruction()
+        // will increment R again when it re-fetches the same byte.
+        tstates += 4;
+        regs[R_R] = ((regs[R_R] - 1) & 0x7F) | (regs[R_R] & 0x80);
         regPairs[RP_PC] = (regPairs[RP_PC] - 1) & 0xFFFF;
         executeInstruction();
         break;

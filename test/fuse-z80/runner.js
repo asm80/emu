@@ -162,14 +162,145 @@ const parseTestsExpected = (text) => {
   return tests;
 };
 
-// --- Smoke test (replaced in Task 3) ---
-const rawIn = readFileSync(join(__dirname, "tests.in"), "utf8");
-const rawExp = readFileSync(join(__dirname, "tests.expected"), "utf8");
-const testsIn = parseTestsIn(rawIn);
-const testsExp = parseTestsExpected(rawExp);
-console.log(`Parsed ${testsIn.length} inputs, ${testsExp.length} expected results`);
-if (testsIn.length !== testsExp.length) {
-  console.error("ERROR: count mismatch between tests.in and tests.expected");
-  process.exit(1);
-}
-console.log("First expected:", JSON.stringify(testsExp[0], null, 2));
+/**
+ * Run one FUSE test and return an array of mismatch strings.
+ * Returns empty array if the test passes.
+ * @param {object} input - Parsed test input
+ * @param {object} expected - Parsed expected result
+ * @returns {string[]} List of mismatch descriptions, or ["SKIPPED: ..."] if skipped
+ */
+const runTest = (input, expected) => {
+  if (input.special.halted !== 0) {
+    return [`SKIPPED: initial halted=${input.special.halted} not supported`];
+  }
+
+  const mem = new Uint8Array(65536);
+
+  // Write initial memory
+  for (const { addr, bytes } of input.memory) {
+    for (let j = 0; j < bytes.length; j++) {
+      mem[addr + j] = bytes[j];
+    }
+  }
+
+  // A fresh CPU instance is created per test so cpu.T() starts at 0
+  const cpu = z80({
+    byteAt: (addr) => mem[addr],
+    byteTo: (addr, val) => { mem[addr] = val & 0xFF; },
+  });
+
+  // Set registers
+  cpu.set("AF",   input.regs.af);
+  cpu.set("BC",   input.regs.bc);
+  cpu.set("DE",   input.regs.de);
+  cpu.set("HL",   input.regs.hl);
+  cpu.set("AF_",  input.regs.afAlt);
+  cpu.set("BC_",  input.regs.bcAlt);
+  cpu.set("DE_",  input.regs.deAlt);
+  cpu.set("HL_",  input.regs.hlAlt);
+  cpu.set("IX",   input.regs.ix);
+  cpu.set("IY",   input.regs.iy);
+  cpu.set("SP",   input.regs.sp);
+  cpu.set("PC",   input.regs.pc);
+  cpu.set("I",    input.special.i);
+  cpu.set("R",    input.special.r);
+  cpu.set("IFF1", input.special.iff1);
+  cpu.set("IFF2", input.special.iff2);
+  cpu.set("IM",   input.special.im);
+
+  // Execute — steps(1) always completes exactly one instruction
+  cpu.steps(input.special.tstates);
+
+  const state = cpu.status();
+  const mismatches = [];
+
+  // Verify registers — expKey is in expected.regs or expected.special
+  const regMap = [
+    ["af",   "af",    state.af],
+    ["bc",   "bc",    state.bc],
+    ["de",   "de",    state.de],
+    ["hl",   "hl",    state.hl],
+    ["af'",  "afAlt", state.af_],
+    ["bc'",  "bcAlt", state.bc_],
+    ["de'",  "deAlt", state.de_],
+    ["hl'",  "hlAlt", state.hl_],
+    ["ix",   "ix",    state.ix],
+    ["iy",   "iy",    state.iy],
+    ["sp",   "sp",    state.sp],
+    ["pc",   "pc",    state.pc],
+    ["i",    "i",     state.i],
+    ["r",    "r",     state.r],
+    ["iff1", "iff1",  state.iff1],
+    ["iff2", "iff2",  state.iff2],
+    ["im",   "im",    state.im],
+  ];
+
+  for (const [label, expKey, got] of regMap) {
+    const exp = expKey in expected.regs ? expected.regs[expKey] : expected.special[expKey];
+    if (got !== exp) {
+      mismatches.push(
+        `  ${label.padEnd(6)}: expected ${exp.toString(16).padStart(4, "0")}, got ${got.toString(16).padStart(4, "0")}`
+      );
+    }
+  }
+
+  // Verify halted
+  const gotHalted = state.halted ? 1 : 0;
+  if (gotHalted !== expected.special.halted) {
+    mismatches.push(`  halted: expected ${expected.special.halted}, got ${gotHalted}`);
+  }
+
+  // Verify T-states — cpu.T() returns total cycles since construction
+  const gotT = cpu.T();
+  if (gotT !== expected.special.tstates) {
+    mismatches.push(`  tstates: expected ${expected.special.tstates}, got ${gotT}`);
+  }
+
+  // Verify memory changes
+  for (const { addr, byte } of expected.memChanges) {
+    if (mem[addr] !== byte) {
+      mismatches.push(
+        `  mem[${addr.toString(16).padStart(4, "0")}]: expected ${byte.toString(16).padStart(2, "0")}, got ${mem[addr].toString(16).padStart(2, "0")}`
+      );
+    }
+  }
+
+  return mismatches;
+};
+
+const main = () => {
+  const rawIn = readFileSync(join(__dirname, "tests.in"), "utf8");
+  const rawExp = readFileSync(join(__dirname, "tests.expected"), "utf8");
+  const testsIn = parseTestsIn(rawIn);
+  const testsExp = parseTestsExpected(rawExp);
+
+  if (testsIn.length !== testsExp.length) {
+    console.error(`ERROR: tests.in has ${testsIn.length} tests but tests.expected has ${testsExp.length}`);
+    process.exit(1);
+  }
+
+  let passed = 0;
+  let failed = 0;
+  const failures = [];
+
+  for (let i = 0; i < testsIn.length; i++) {
+    const mismatches = runTest(testsIn[i], testsExp[i]);
+    if (mismatches.length === 0) {
+      passed++;
+    } else {
+      failed++;
+      failures.push({ name: testsIn[i].name, mismatches });
+    }
+  }
+
+  // Print failures
+  for (const { name, mismatches } of failures) {
+    console.log(`\nFAILED: ${name}`);
+    for (const m of mismatches) console.log(m);
+  }
+
+  console.log(`\nFUSE Z80: ${passed} passed, ${failed} failed`);
+  process.exit(failed > 0 ? 1 : 0);
+};
+
+main();
