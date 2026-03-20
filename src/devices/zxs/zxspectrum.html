@@ -42,7 +42,7 @@
     // ── Audio ring buffer ────────────────────────────────────────────────────
     // Pre-allocated Float32Array ring avoids GC pauses that cause crackling.
     // Power-of-2 size enables fast index wrap with bitwise AND.
-    const RING_BITS = 13;                  // 8192 samples ≈ 186 ms at 44100 Hz
+    const RING_BITS = 13;                  // 8192 samples ≈ 171–186 ms depending on AudioContext sample rate
     const RING_SIZE = 1 << RING_BITS;
     const RING_MASK = RING_SIZE - 1;
     const audioRing = new Float32Array(RING_SIZE);
@@ -149,7 +149,8 @@
 
     // ── Emulator control ─────────────────────────────────────────────────────
     const startEmulator = (model) => {
-      zxs = createZXS({ model, sampleRate: 44100 });
+      const sr = audioCtx ? audioCtx.sampleRate : 44100;
+      zxs = createZXS({ model, sampleRate: sr });
       zxs.reset();
       statusEl.textContent = `Running ${model}`;
     };
