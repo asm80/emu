@@ -68,23 +68,6 @@ const make128 = () => {
   return zxs;
 };
 
-/**
- * Inject machine code starting at address 0x4000 and set PC there.
- *
- * @param {object}   zxs    - ZXS instance
- * @param {number[]} bytes  - Opcodes to write
- */
-const inject = (zxs, bytes) => {
-  const ram = zxs.getRAM();
-  for (let i = 0; i < bytes.length; i++) ram[i] = bytes[i];
-  zxs.status();  // warm up
-  // Use cpu.set via status result — access via zxs.status which includes pc set
-  // We need to use the internal method; instead patch PC via a known address:
-  // ROM starts at 0x0000 and jumps immediately; we write to 0x4000 (RAM start)
-  // For test injection, we overwrite RAM at 0x4000 and rely on the emulator
-  // already being past ROM initialization after reset + a few frames.
-};
-
 // ── AY-3-8912 standalone ──────────────────────────────────────────────────────
 
 QUnit.module("AY-3-8912 standalone", () => {

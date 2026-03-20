@@ -612,9 +612,12 @@ export const createZXS = (options = {}) => {
       let remaining = tStates;
       let tRendered = 0;
 
+      /**
+       * Render visible scanlines whose T-state position falls within [tRendered, tRendered + chunk).
+       * Called after each cpu.steps() slice; tRendered must be updated by the caller after this call.
+       * @param {number} chunk - T-states executed in this execution slice
+       */
       const renderChunk = (chunk) => {
-        // Render visible scanlines whose proportional T-state position falls
-        // within [tRendered, tRendered + chunk). Retrace lines are not rendered.
         for (let line = 0; line < VISIBLE_LINES; line++) {
           const lineT = Math.round(tStates * line / SCANLINES);
           if (lineT >= tRendered && lineT < tRendered + chunk) {
@@ -744,10 +747,10 @@ export const createZXS = (options = {}) => {
         }
       }
 
-      // Reset interrupt counter so the first interrupt fires at the start of
-      // the next frame (same semantics as reset()). This ensures a consistent
+      // Reset interrupt counter so the first interrupt fires after one full
+      // 50 Hz period (same semantics as reset()). This ensures a consistent
       // timing baseline regardless of when the snapshot was saved.
-      interruptCounter = 0;
+      interruptCounter = interruptPeriod;
       initialized = true;
     },
 
