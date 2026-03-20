@@ -624,23 +624,24 @@ export const createZXS = (options = {}) => {
       };
 
       while (remaining > 0) {
-        // Fire the interrupt when the counter expires, before stepping,
-        // so that a HALTed CPU wakes and processes it during cpu.steps().
-        if (interruptCounter <= 0) {
+        if (interruptCounter <= remaining) {
+          const tBefore = cpu.T();
+          cpu.steps(interruptCounter);
+          const actual = cpu.T() - tBefore;
+          renderChunk(actual);
+          tRendered += actual;
           cpu.interrupt(0xFF);
-          interruptCounter += interruptPeriod;
+          remaining -= actual;
+          interruptCounter = interruptPeriod;
+        } else {
+          const tBefore = cpu.T();
+          cpu.steps(remaining);
+          const actual = cpu.T() - tBefore;
+          renderChunk(actual);
+          tRendered += actual;
+          interruptCounter -= actual;
+          remaining = 0;
         }
-
-        // chunk: T-states to execute in this slice (up to the next interrupt).
-        const chunk = Math.min(remaining, interruptCounter);
-
-        cpu.steps(chunk);
-        // Use chunk (not cpu.T() delta) to track system time: a HALTed CPU
-        // consumes no internal T-states but system time still passes.
-        renderChunk(chunk);
-        tRendered += chunk;
-        interruptCounter -= chunk;
-        remaining -= chunk;
       }
 
       // Flush any remaining tape T-states not consumed by IN instructions
