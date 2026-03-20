@@ -747,10 +747,11 @@ export const createZXS = (options = {}) => {
         }
       }
 
-      // Reset interrupt counter so the first interrupt fires after one full
-      // 50 Hz period (same semantics as reset()). This ensures a consistent
-      // timing baseline regardless of when the snapshot was saved.
-      interruptCounter = interruptPeriod;
+      // Reset interrupt counter to 0 so the first interrupt fires immediately
+      // at the start of the first frame() call after loading the snapshot.
+      // This ensures the ISR runs within that first frame, giving a consistent
+      // timing baseline (matches the original SNA load semantics).
+      interruptCounter = 0;
       initialized = true;
     },
 
