@@ -279,6 +279,29 @@ const main = () => {
     process.exit(1);
   }
 
+  // Parse --test <name> argument for single-test mode
+  const testArgIdx = process.argv.indexOf("--test");
+  const filterName = testArgIdx !== -1 ? process.argv[testArgIdx + 1] : null;
+
+  if (filterName !== null) {
+    const inIdx = testsIn.findIndex((t) => t.name === filterName);
+    const expIdx = testsExp.findIndex((t) => t.name === filterName);
+    if (inIdx === -1 || expIdx === -1) {
+      console.error(`ERROR: test "${filterName}" not found`);
+      process.exit(1);
+    }
+    console.log(`Input:    ${JSON.stringify(testsIn[inIdx], null, 2)}`);
+    console.log(`Expected: ${JSON.stringify(testsExp[expIdx], null, 2)}`);
+    const mismatches = runTest(testsIn[inIdx], testsExp[expIdx]);
+    if (mismatches.length === 0) {
+      console.log(`\nPASSED: ${filterName}`);
+    } else {
+      console.log(`\nFAILED: ${filterName}`);
+      for (const m of mismatches) console.log(m);
+    }
+    process.exit(mismatches.length > 0 ? 1 : 0);
+  }
+
   let passed = 0;
   let failed = 0;
   let skipped = 0;
