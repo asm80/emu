@@ -150,9 +150,10 @@ const parseTestsExpected = (text) => {
       i++;
       const tokens = line.split(/\s+/);
       const addr = parseInt(tokens[0], 16);
-      const byte = parseInt(tokens[1], 16);
-      // tokens[2] is "-1" — ignored
-      memChanges.push({ addr, byte });
+      for (let j = 1; j < tokens.length; j++) {
+        if (tokens[j] === "-1") break;
+        memChanges.push({ addr: addr + (j - 1), byte: parseInt(tokens[j], 16) });
+      }
     }
 
     tests.push({ name, regs, special, memChanges });
