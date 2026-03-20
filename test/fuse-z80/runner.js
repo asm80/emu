@@ -85,8 +85,90 @@ const parseTestsIn = (text) => {
   return tests;
 };
 
-// --- Smoke test (replaced in Task 2) ---
-const raw = readFileSync(join(__dirname, "tests.in"), "utf8");
-const parsed = parseTestsIn(raw);
-console.log(`Parsed ${parsed.length} tests from tests.in`);
-console.log("First test:", JSON.stringify(parsed[0], null, 2));
+/**
+ * Parse FUSE tests.expected file into an array of expected results.
+ * @param {string} text - Full file contents
+ * @returns {Array<{name: string, regs: object, special: object, memChanges: Array}>}
+ */
+const parseTestsExpected = (text) => {
+  const tests = [];
+  const lines = text.split(/\r?\n/);
+  let i = 0;
+
+  while (i < lines.length) {
+    // Skip blank lines between tests
+    if (lines[i].trim() === "") { i++; continue; }
+
+    const name = lines[i].trim();
+    i++;
+
+    // Skip event lines: second token is a memory/port-access type keyword
+    while (i < lines.length) {
+      const tokens = lines[i].trim().split(/\s+/);
+      if (/^(MC|MR|MW|PC|PR|PW)$/.test(tokens[1])) { i++; continue; }
+      break;
+    }
+
+    // Register pair line: AF BC DE HL AF' BC' DE' HL' IX IY SP PC MEMPTR
+    const regTokens = lines[i].trim().split(/\s+/);
+    i++;
+    const regs = {
+      af:     parseInt(regTokens[0], 16),
+      bc:     parseInt(regTokens[1], 16),
+      de:     parseInt(regTokens[2], 16),
+      hl:     parseInt(regTokens[3], 16),
+      afAlt:  parseInt(regTokens[4], 16),
+      bcAlt:  parseInt(regTokens[5], 16),
+      deAlt:  parseInt(regTokens[6], 16),
+      hlAlt:  parseInt(regTokens[7], 16),
+      ix:     parseInt(regTokens[8], 16),
+      iy:     parseInt(regTokens[9], 16),
+      sp:     parseInt(regTokens[10], 16),
+      pc:     parseInt(regTokens[11], 16),
+      // regTokens[12] is MEMPTR — not used
+    };
+
+    // Special line: I R IFF1 IFF2 IM <halted> <tstates>
+    const specTokens = lines[i].trim().split(/\s+/);
+    i++;
+    const special = {
+      i:       parseInt(specTokens[0], 16),
+      r:       parseInt(specTokens[1], 16),
+      iff1:    parseInt(specTokens[2], 10),
+      iff2:    parseInt(specTokens[3], 10),
+      im:      parseInt(specTokens[4], 10),
+      halted:  parseInt(specTokens[5], 10),
+      tstates: parseInt(specTokens[6], 10),
+    };
+
+    // Memory-change lines: <addr> <byte> -1   (one entry per changed byte)
+    // A blank line (or EOF) ends the test block
+    const memChanges = [];
+    while (i < lines.length) {
+      const line = lines[i].trim();
+      if (line === "") { i++; break; }
+      i++;
+      const tokens = line.split(/\s+/);
+      const addr = parseInt(tokens[0], 16);
+      const byte = parseInt(tokens[1], 16);
+      // tokens[2] is "-1" — ignored
+      memChanges.push({ addr, byte });
+    }
+
+    tests.push({ name, regs, special, memChanges });
+  }
+
+  return tests;
+};
+
+// --- Smoke test (replaced in Task 3) ---
+const rawIn = readFileSync(join(__dirname, "tests.in"), "utf8");
+const rawExp = readFileSync(join(__dirname, "tests.expected"), "utf8");
+const testsIn = parseTestsIn(rawIn);
+const testsExp = parseTestsExpected(rawExp);
+console.log(`Parsed ${testsIn.length} inputs, ${testsExp.length} expected results`);
+if (testsIn.length !== testsExp.length) {
+  console.error("ERROR: count mismatch between tests.in and tests.expected");
+  process.exit(1);
+}
+console.log("First expected:", JSON.stringify(testsExp[0], null, 2));
