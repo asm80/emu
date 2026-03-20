@@ -405,6 +405,52 @@ QUnit.module("128k paging", () => {
 
 });
 
+QUnit.module("ZXS interrupt timing", () => {
+  QUnit.test("interrupt fires once per 69888 T-states regardless of frame split", (assert) => {
+    // Observable: the ZX Spectrum 48k ROM's IM1 handler at 0x0038 increments
+    // the FRAMES counter at RAM address 0x5C78 on every interrupt.
+    // With IFF=1 and a HALT program, every interrupt fires the ROM handler.
+    //
+    // Old (broken) behavior: cpu.interrupt() fires once per frame() call → 3 interrupts
+    // across 3 calls → FRAMES = 3.
+    // New (correct) behavior: interrupt fires once per 69888 T-states → 1 interrupt
+    // across 3 calls summing to 69888 T-states → FRAMES = 1.
+
+    // Build a 48k SNA: IFF=1, IM=1, SP=0xFFFE, PC=0x4000, program = HALT.
+    // The ROM's IM1 handler handles the interrupt and increments FRAMES.
+    const makeSNA = () => {
+      const sna = new Uint8Array(49179);
+      sna[19] = 0x04;        // IFF flags: bit 2 = IFF1 = 1 (interrupts enabled)
+      sna[23] = 0xFE; sna[24] = 0xFF;  // SP = 0xFFFE
+      sna[25] = 1;           // IM = 1
+      // PC on stack: ram48[0xFFFE - 0x4000] = sna[27 + 0xBFFE] = sna[49177]
+      sna[49177] = 0x00; sna[49178] = 0x40;  // PC = 0x4000
+      sna[27] = 0x76;        // HALT at 0x4000 — loops, accepts interrupts when IFF=1
+      return sna;
+    };
+
+    // FRAMES low byte is at address 0x5C78 = ram48 offset 0x1C78 = 7288
+    const FRAMES_OFFSET = 0x5C78 - 0x4000;
+
+    // Reference: 1 frame of exactly 69888 T-states → exactly 1 interrupt
+    const zxsRef = createZXS({ model: "48k", sampleRate: 44100 });
+    zxsRef.loadSNA(makeSNA());
+    zxsRef.frame(69888, new Uint8Array(8));
+    const refFrames = zxsRef.getRAM()[FRAMES_OFFSET];
+
+    // Test: 3 frames of 23296 T-states each (sum = 69888)
+    const zxs = createZXS({ model: "48k", sampleRate: 44100 });
+    zxs.loadSNA(makeSNA());
+    zxs.frame(23296, new Uint8Array(8));
+    zxs.frame(23296, new Uint8Array(8));
+    zxs.frame(23296, new Uint8Array(8));
+    const testFrames = zxs.getRAM()[FRAMES_OFFSET];
+
+    assert.equal(refFrames, 1, "reference: exactly 1 interrupt in 69888 T-states");
+    assert.equal(testFrames, refFrames, "split frames: same interrupt count as single frame");
+  });
+});
+
 QUnit.module("ZXS AY 48k", () => {
   QUnit.test("AY audio output is non-zero in 48k mode after programming volume", (assert) => {
     const zxs = createZXS({ model: "48k", sampleRate: 44100 });

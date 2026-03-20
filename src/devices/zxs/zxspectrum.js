@@ -61,6 +61,10 @@ const ZX_PALETTE_RGBA = new Uint32Array(16);
   }
 })();
 
+/** Exact T-states between 50 Hz ULA maskable interrupts. */
+const INTERRUPT_PERIOD_48  = 69888;
+const INTERRUPT_PERIOD_128 = 70908;
+
 // ── Tape constants ────────────────────────────────────────────────────────────
 
 const PILOT_PULSE     = 2168;
@@ -264,6 +268,15 @@ export const createZXS = (options = {}) => {
 
   /** Flash phase toggles every 16 frames (50 Hz → 3.125 Hz). */
   let frameCount = 0;
+
+  /** T-states between 50 Hz ULA interrupts for this model. */
+  const interruptPeriod = is128k ? INTERRUPT_PERIOD_128 : INTERRUPT_PERIOD_48;
+  /**
+   * T-states until the next ULA interrupt fires. Persists across frame() calls.
+   * Starts at 0 so the first interrupt fires immediately at the start of
+   * the first frame, matching the original hardware behaviour.
+   */
+  let interruptCounter = 0;
 
   // ── Audio ─────────────────────────────────────────────────────────────────
 
@@ -553,7 +566,7 @@ export const createZXS = (options = {}) => {
       ram48.fill(0);
       ram128.fill(0);
       romBank = 0; ramBank = 0; screenBank = 5; pagingDisabled = false;
-      borderColor = 7; frameCount = 0;
+      borderColor = 7; frameCount = 0; interruptCounter = 0;
       currentKeyMatrix = new Uint8Array(8);
       beeperState = 0; beeperStateAtFrameStart = 0; beeperEvents = []; frameBaseT = 0;
       tapeEdges = new Uint32Array(0); tapePos = 0; tapeT = 0; tapeSignal = 0; tapePlaying = false; tapeTBase = 0;
@@ -582,25 +595,52 @@ export const createZXS = (options = {}) => {
       beeperStateAtFrameStart = beeperState;
       beeperEvents        = [];
 
-      // Frame interrupt (IM1 → RST 0x38)
-      cpu.interrupt(0xFF);
-
       const flashPhase = (frameCount >> 4) & 1;
 
-      // Distribute tStates proportionally across VISIBLE_LINES, then retrace.
-      // Tape is advanced lazily inside portIn at the exact T-state of each
-      // IN (0xFE) instruction, so no per-scanline advancement is needed here.
-      let tDone = 0;
-      for (let line = 0; line < VISIBLE_LINES; line++) {
-        const lineTarget = Math.round(tStates * (line + 1) / SCANLINES);
-        const lineT = lineTarget - tDone;
-        if (lineT > 0) cpu.steps(lineT);
-        tDone = lineTarget;
-        renderScanline(line, borderColor, flashPhase);
+      // Execute tStates T-states, injecting the ULA 50 Hz interrupt at the correct
+      // T-state position. interruptCounter persists across frame() calls so the
+      // interrupt fires at exactly 69888 (48k) or 70908 (128k) T-state intervals
+      // regardless of how large each frame slice is.
+      //
+      // The interrupt is fired BEFORE the cpu.steps() call that will process it,
+      // so that a HALTed CPU wakes up to handle it. interruptCounter counts
+      // T-states remaining until the next interrupt fires.
+      //
+      // Scanlines are rendered proportionally to preserve mid-frame border color
+      // changes. tRendered tracks frame-relative T-states executed so far.
+      let remaining = tStates;
+      let tRendered = 0;
+
+      const renderChunk = (chunk) => {
+        // Render visible scanlines whose proportional T-state position falls
+        // within [tRendered, tRendered + chunk). Retrace lines are not rendered.
+        for (let line = 0; line < VISIBLE_LINES; line++) {
+          const lineT = Math.round(tStates * line / SCANLINES);
+          if (lineT >= tRendered && lineT < tRendered + chunk) {
+            renderScanline(line, borderColor, flashPhase);
+          }
+        }
+      };
+
+      while (remaining > 0) {
+        // Fire the interrupt when the counter expires, before stepping,
+        // so that a HALTed CPU wakes and processes it during cpu.steps().
+        if (interruptCounter <= 0) {
+          cpu.interrupt(0xFF);
+          interruptCounter += interruptPeriod;
+        }
+
+        // chunk: T-states to execute in this slice (up to the next interrupt).
+        const chunk = Math.min(remaining, interruptCounter);
+
+        cpu.steps(chunk);
+        // Use chunk (not cpu.T() delta) to track system time: a HALTed CPU
+        // consumes no internal T-states but system time still passes.
+        renderChunk(chunk);
+        tRendered += chunk;
+        interruptCounter -= chunk;
+        remaining -= chunk;
       }
-      // Retrace lines (no rendering)
-      const retraceT = tStates - tDone;
-      if (retraceT > 0) cpu.steps(retraceT);
 
       // Flush any remaining tape T-states not consumed by IN instructions
       // (e.g. frames where the loader isn't actively sampling).
