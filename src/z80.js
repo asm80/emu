@@ -160,6 +160,7 @@ export default (callbacks) => {
   let iff2 = 0;          // Interrupt flip-flop 2
   let im = 0;            // Interrupt mode (0, 1, or 2)
   let halted = false;    // HALT state
+  let memptr = 0;        // Internal MEMPTR/WZ register (used for undocumented flag bits)
   let tstates = 0;       // Cycle counter
   let interruptPending = false;
   let NMIPending = false;
@@ -413,13 +414,17 @@ export default (callbacks) => {
     } else if (opcode < 0x80) {
       // 0x40-0x7F: BIT n,r
       const value = getReg(reg);
-      regs[R_F] = (regs[R_F] & FLAG_C) | FLAG_H | (value & (FLAG_X | FLAG_Y));
+      // Undocumented: for BIT n,(HL), Y/X flags come from high byte of MEMPTR (WZ); for registers, from value
+      const xySource = isMemory(reg) ? (memptr >> 8) : value;
+      regs[R_F] = (regs[R_F] & FLAG_C) | FLAG_H | (xySource & (FLAG_X | FLAG_Y));
       if (!(value & (1 << bit))) {
         regs[R_F] |= FLAG_P | FLAG_Z;
       }
       if (bit === 7 && (value & 0x80)) {
         regs[R_F] |= FLAG_S;
       }
+      // Update MEMPTR after BIT (HL): WZ = HL + 1
+      if (isMemory(reg)) memptr = (regPairs[RP_HL] + 1) & 0xFFFF;
       tstates += isMemory(reg) ? 12 : 8;
 
     } else if (opcode < 0xC0) {
@@ -476,37 +481,43 @@ export default (callbacks) => {
         break;
       }
 
-      case 0xB0: { // LDIR - internal loop until BC=0
-        let ldir_val = 0;
-        do {
-          ldir_val = readByte(regPairs[RP_HL]);
-          writeByte(regPairs[RP_DE], ldir_val);
-          regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
-          regPairs[RP_DE] = (regPairs[RP_DE] + 1) & 0xFFFF;
-          regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
-          tstates += regPairs[RP_BC] ? 21 : 16;
-        } while (regPairs[RP_BC]);
+      case 0xB0: { // LDIR - one iteration; loops back via PC if BC != 0
+        const ldir_val = readByte(regPairs[RP_HL]);
+        writeByte(regPairs[RP_DE], ldir_val);
+        regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+        regPairs[RP_DE] = (regPairs[RP_DE] + 1) & 0xFFFF;
+        regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
         const ldir_n = (ldir_val + regs[R_A]) & 0xFF;
         regs[R_F] = (regs[R_F] & (FLAG_C | FLAG_Z | FLAG_S)) |
+                    (regPairs[RP_BC] ? FLAG_P : 0) |
                     (ldir_n & FLAG_X) |
                     ((ldir_n & 0x02) ? FLAG_Y : 0);
+        if (regPairs[RP_BC]) {
+          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
+          tstates += 21;
+        } else {
+          tstates += 16;
+        }
         break;
       }
 
-      case 0xB8: { // LDDR - internal loop until BC=0
-        let lddr_val = 0;
-        do {
-          lddr_val = readByte(regPairs[RP_HL]);
-          writeByte(regPairs[RP_DE], lddr_val);
-          regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
-          regPairs[RP_DE] = (regPairs[RP_DE] - 1) & 0xFFFF;
-          regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
-          tstates += regPairs[RP_BC] ? 21 : 16;
-        } while (regPairs[RP_BC]);
+      case 0xB8: { // LDDR - one iteration; loops back via PC if BC != 0
+        const lddr_val = readByte(regPairs[RP_HL]);
+        writeByte(regPairs[RP_DE], lddr_val);
+        regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+        regPairs[RP_DE] = (regPairs[RP_DE] - 1) & 0xFFFF;
+        regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
         const lddr_n = (lddr_val + regs[R_A]) & 0xFF;
         regs[R_F] = (regs[R_F] & (FLAG_C | FLAG_Z | FLAG_S)) |
+                    (regPairs[RP_BC] ? FLAG_P : 0) |
                     (lddr_n & FLAG_X) |
                     ((lddr_n & 0x02) ? FLAG_Y : 0);
+        if (regPairs[RP_BC]) {
+          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
+          tstates += 21;
+        } else {
+          tstates += 16;
+        }
         break;
       }
 
@@ -547,16 +558,12 @@ export default (callbacks) => {
         break;
       }
 
-      case 0xB1: { // CPIR - internal loop until match or BC=0
-        let cpir_result = 1, cpir_lookup = 0;
-        do {
-          const cpir_val = readByte(regPairs[RP_HL]);
-          cpir_result = (regs[R_A] - cpir_val) & 0xFF;
-          cpir_lookup = ((regs[R_A] & 0x08) >> 3) | ((cpir_val & 0x08) >> 2) | ((cpir_result & 0x08) >> 1);
-          regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
-          regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
-          tstates += (regPairs[RP_BC] && cpir_result !== 0) ? 21 : 16;
-        } while (regPairs[RP_BC] && cpir_result !== 0);
+      case 0xB1: { // CPIR - one iteration; loops back via PC if BC != 0 and no match
+        const cpir_val = readByte(regPairs[RP_HL]);
+        const cpir_result = (regs[R_A] - cpir_val) & 0xFF;
+        const cpir_lookup = ((regs[R_A] & 0x08) >> 3) | ((cpir_val & 0x08) >> 2) | ((cpir_result & 0x08) >> 1);
+        regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+        regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
         regs[R_F] = (regs[R_F] & FLAG_C) |
                     (regPairs[RP_BC] ? FLAG_P | FLAG_N : FLAG_N) |
                     halfcarrySubTable[cpir_lookup] |
@@ -565,19 +572,21 @@ export default (callbacks) => {
         let cpir_n = cpir_result;
         if (regs[R_F] & FLAG_H) cpir_n--;
         regs[R_F] |= (cpir_n & FLAG_X) | ((cpir_n & 0x02) ? FLAG_Y : 0);
+        if (regPairs[RP_BC] && cpir_result !== 0) {
+          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
+          tstates += 21;
+        } else {
+          tstates += 16;
+        }
         break;
       }
 
-      case 0xB9: { // CPDR - internal loop until match or BC=0
-        let cpdr_result = 1, cpdr_lookup = 0;
-        do {
-          const cpdr_val = readByte(regPairs[RP_HL]);
-          cpdr_result = (regs[R_A] - cpdr_val) & 0xFF;
-          cpdr_lookup = ((regs[R_A] & 0x08) >> 3) | ((cpdr_val & 0x08) >> 2) | ((cpdr_result & 0x08) >> 1);
-          regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
-          regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
-          tstates += (regPairs[RP_BC] && cpdr_result !== 0) ? 21 : 16;
-        } while (regPairs[RP_BC] && cpdr_result !== 0);
+      case 0xB9: { // CPDR - one iteration; loops back via PC if BC != 0 and no match
+        const cpdr_val = readByte(regPairs[RP_HL]);
+        const cpdr_result = (regs[R_A] - cpdr_val) & 0xFF;
+        const cpdr_lookup = ((regs[R_A] & 0x08) >> 3) | ((cpdr_val & 0x08) >> 2) | ((cpdr_result & 0x08) >> 1);
+        regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+        regPairs[RP_BC] = (regPairs[RP_BC] - 1) & 0xFFFF;
         regs[R_F] = (regs[R_F] & FLAG_C) |
                     (regPairs[RP_BC] ? FLAG_P | FLAG_N : FLAG_N) |
                     halfcarrySubTable[cpdr_lookup] |
@@ -586,51 +595,80 @@ export default (callbacks) => {
         let cpdr_n = cpdr_result;
         if (regs[R_F] & FLAG_H) cpdr_n--;
         regs[R_F] |= (cpdr_n & FLAG_X) | ((cpdr_n & 0x02) ? FLAG_Y : 0);
+        if (regPairs[RP_BC] && cpdr_result !== 0) {
+          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
+          tstates += 21;
+        } else {
+          tstates += 16;
+        }
         break;
       }
 
       // I/O block operations
+      // Helper for block I/O flags (used inline per instruction)
       case 0xA2: { // INI - Input and increment
-        const ini_val = portIn ? portIn(regs[R_C]) : 0;
+        const ini_val = portIn ? portIn(regPairs[RP_BC]) : 0xFF;
         writeByte(regPairs[RP_HL], ini_val);
         regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
         regs[R_B] = (regs[R_B] - 1) & 0xFF;
-        regs[R_F] = (regs[R_B] ? 0 : FLAG_Z) | FLAG_N;
+        const ini_k = ini_val + ((regs[R_C] + 1) & 0xFF);
+        regs[R_F] = sz53Table[regs[R_B]] |
+                    (ini_k > 255 ? FLAG_H | FLAG_C : 0) |
+                    ((ini_val & 0x80) ? FLAG_N : 0) |
+                    parityTable[(ini_k & 7) ^ regs[R_B]];
         tstates += 16;
         break;
       }
 
       case 0xAA: { // IND - Input and decrement
-        const ind_val = portIn ? portIn(regs[R_C]) : 0;
+        const ind_val = portIn ? portIn(regPairs[RP_BC]) : 0xFF;
         writeByte(regPairs[RP_HL], ind_val);
         regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
         regs[R_B] = (regs[R_B] - 1) & 0xFF;
-        regs[R_F] = (regs[R_B] ? 0 : FLAG_Z) | FLAG_N;
+        const ind_k = ind_val + ((regs[R_C] - 1) & 0xFF);
+        regs[R_F] = sz53Table[regs[R_B]] |
+                    (ind_k > 255 ? FLAG_H | FLAG_C : 0) |
+                    ((ind_val & 0x80) ? FLAG_N : 0) |
+                    parityTable[(ind_k & 7) ^ regs[R_B]];
         tstates += 16;
         break;
       }
 
-      case 0xB2: { // INIR - Input, increment and repeat until B=0
-        do {
-          const inir_val = portIn ? portIn(regs[R_C]) : 0;
-          writeByte(regPairs[RP_HL], inir_val);
-          regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
-          regs[R_B] = (regs[R_B] - 1) & 0xFF;
-          tstates += regs[R_B] ? 21 : 16;
-        } while (regs[R_B]);
-        regs[R_F] = FLAG_Z | FLAG_N;
+      case 0xB2: { // INIR - one iteration; loops back via PC if B != 0
+        const inir_val = portIn ? portIn(regPairs[RP_BC]) : 0xFF;
+        writeByte(regPairs[RP_HL], inir_val);
+        regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+        regs[R_B] = (regs[R_B] - 1) & 0xFF;
+        const inir_k = inir_val + ((regs[R_C] + 1) & 0xFF);
+        regs[R_F] = sz53Table[regs[R_B]] |
+                    (inir_k > 255 ? FLAG_H | FLAG_C : 0) |
+                    ((inir_val & 0x80) ? FLAG_N : 0) |
+                    parityTable[(inir_k & 7) ^ regs[R_B]];
+        if (regs[R_B]) {
+          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
+          tstates += 21;
+        } else {
+          tstates += 16;
+        }
         break;
       }
 
-      case 0xBA: { // INDR - Input, decrement and repeat until B=0
-        do {
-          const indr_val = portIn ? portIn(regs[R_C]) : 0;
-          writeByte(regPairs[RP_HL], indr_val);
-          regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
-          regs[R_B] = (regs[R_B] - 1) & 0xFF;
-          tstates += regs[R_B] ? 21 : 16;
-        } while (regs[R_B]);
-        regs[R_F] = FLAG_Z | FLAG_N;
+      case 0xBA: { // INDR - one iteration; loops back via PC if B != 0
+        const indr_val = portIn ? portIn(regPairs[RP_BC]) : 0xFF;
+        writeByte(regPairs[RP_HL], indr_val);
+        regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+        regs[R_B] = (regs[R_B] - 1) & 0xFF;
+        const indr_k = indr_val + ((regs[R_C] - 1) & 0xFF);
+        regs[R_F] = sz53Table[regs[R_B]] |
+                    (indr_k > 255 ? FLAG_H | FLAG_C : 0) |
+                    ((indr_val & 0x80) ? FLAG_N : 0) |
+                    parityTable[(indr_k & 7) ^ regs[R_B]];
+        if (regs[R_B]) {
+          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
+          tstates += 21;
+        } else {
+          tstates += 16;
+        }
         break;
       }
 
@@ -639,7 +677,11 @@ export default (callbacks) => {
         regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
         regs[R_B] = (regs[R_B] - 1) & 0xFF;
         if (portOut) portOut(regs[R_C], outi_val);
-        regs[R_F] = (regs[R_B] ? 0 : FLAG_Z) | FLAG_N;
+        const outi_k = outi_val + regs[R_L];
+        regs[R_F] = sz53Table[regs[R_B]] |
+                    (outi_k > 255 ? FLAG_H | FLAG_C : 0) |
+                    ((outi_val & 0x80) ? FLAG_N : 0) |
+                    parityTable[(outi_k & 7) ^ regs[R_B]];
         tstates += 16;
         break;
       }
@@ -649,32 +691,50 @@ export default (callbacks) => {
         regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
         regs[R_B] = (regs[R_B] - 1) & 0xFF;
         if (portOut) portOut(regs[R_C], outd_val);
-        regs[R_F] = (regs[R_B] ? 0 : FLAG_Z) | FLAG_N;
+        const outd_k = outd_val + regs[R_L];
+        regs[R_F] = sz53Table[regs[R_B]] |
+                    (outd_k > 255 ? FLAG_H | FLAG_C : 0) |
+                    ((outd_val & 0x80) ? FLAG_N : 0) |
+                    parityTable[(outd_k & 7) ^ regs[R_B]];
         tstates += 16;
         break;
       }
 
-      case 0xB3: { // OTIR - Output, increment and repeat until B=0
-        do {
-          const otir_val = readByte(regPairs[RP_HL]);
-          regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
-          regs[R_B] = (regs[R_B] - 1) & 0xFF;
-          if (portOut) portOut(regs[R_C], otir_val);
-          tstates += regs[R_B] ? 21 : 16;
-        } while (regs[R_B]);
-        regs[R_F] = FLAG_Z | FLAG_N;
+      case 0xB3: { // OTIR - one iteration; loops back via PC if B != 0
+        const otir_val = readByte(regPairs[RP_HL]);
+        regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
+        regs[R_B] = (regs[R_B] - 1) & 0xFF;
+        if (portOut) portOut(regs[R_C], otir_val);
+        const otir_k = otir_val + regs[R_L];
+        regs[R_F] = sz53Table[regs[R_B]] |
+                    (otir_k > 255 ? FLAG_H | FLAG_C : 0) |
+                    ((otir_val & 0x80) ? FLAG_N : 0) |
+                    parityTable[(otir_k & 7) ^ regs[R_B]];
+        if (regs[R_B]) {
+          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
+          tstates += 21;
+        } else {
+          tstates += 16;
+        }
         break;
       }
 
-      case 0xBB: { // OTDR - Output, decrement and repeat until B=0
-        do {
-          const otdr_val = readByte(regPairs[RP_HL]);
-          regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
-          regs[R_B] = (regs[R_B] - 1) & 0xFF;
-          if (portOut) portOut(regs[R_C], otdr_val);
-          tstates += regs[R_B] ? 21 : 16;
-        } while (regs[R_B]);
-        regs[R_F] = FLAG_Z | FLAG_N;
+      case 0xBB: { // OTDR - one iteration; loops back via PC if B != 0
+        const otdr_val = readByte(regPairs[RP_HL]);
+        regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
+        regs[R_B] = (regs[R_B] - 1) & 0xFF;
+        if (portOut) portOut(regs[R_C], otdr_val);
+        const otdr_k = otdr_val + regs[R_L];
+        regs[R_F] = sz53Table[regs[R_B]] |
+                    (otdr_k > 255 ? FLAG_H | FLAG_C : 0) |
+                    ((otdr_val & 0x80) ? FLAG_N : 0) |
+                    parityTable[(otdr_k & 7) ^ regs[R_B]];
+        if (regs[R_B]) {
+          regPairs[RP_PC] = (regPairs[RP_PC] - 2) & 0xFFFF;
+          tstates += 21;
+        } else {
+          tstates += 16;
+        }
         break;
       }
 
@@ -683,13 +743,13 @@ export default (callbacks) => {
         const hl = regPairs[RP_HL];
         const bc = regPairs[RP_BC];
         const result = hl + bc + (regs[R_F] & FLAG_C);
-        const lookup = ((hl & 0x8800) >> 11) | ((bc & 0x8800) >> 10) | ((result & 0x8800) >> 9);
+        const ovfLookup = ((hl & 0x8000) >> 15) | ((bc & 0x8000) >> 14) | ((result & 0x8000) >> 13);
         regPairs[RP_HL] = result & 0xFFFF;
         regs[R_F] = (result & 0x10000 ? FLAG_C : 0) |
                     (!(regPairs[RP_HL]) ? FLAG_Z : 0) |
                     ((regPairs[RP_HL] >> 8) & (FLAG_S | FLAG_X | FLAG_Y)) |
-                    ((lookup >> 4) & FLAG_V) |
-                    ((lookup & 0x08) ? FLAG_H : 0);
+                    overflowAddTable[ovfLookup] |
+                    (((hl ^ bc ^ result) >> 8) & FLAG_H);
         tstates += 15;
         break;
       }
@@ -698,13 +758,13 @@ export default (callbacks) => {
         const hl = regPairs[RP_HL];
         const de = regPairs[RP_DE];
         const result = hl + de + (regs[R_F] & FLAG_C);
-        const lookup = ((hl & 0x8800) >> 11) | ((de & 0x8800) >> 10) | ((result & 0x8800) >> 9);
+        const ovfLookup = ((hl & 0x8000) >> 15) | ((de & 0x8000) >> 14) | ((result & 0x8000) >> 13);
         regPairs[RP_HL] = result & 0xFFFF;
         regs[R_F] = (result & 0x10000 ? FLAG_C : 0) |
                     (!(regPairs[RP_HL]) ? FLAG_Z : 0) |
                     ((regPairs[RP_HL] >> 8) & (FLAG_S | FLAG_X | FLAG_Y)) |
-                    ((lookup >> 4) & FLAG_V) |
-                    ((lookup & 0x08) ? FLAG_H : 0);
+                    overflowAddTable[ovfLookup] |
+                    (((hl ^ de ^ result) >> 8) & FLAG_H);
         tstates += 15;
         break;
       }
@@ -712,13 +772,13 @@ export default (callbacks) => {
       case 0x6A: { // ADC HL,HL
         const hl = regPairs[RP_HL];
         const result = hl + hl + (regs[R_F] & FLAG_C);
-        const lookup = ((hl & 0x8800) >> 11) | ((hl & 0x8800) >> 10) | ((result & 0x8800) >> 9);
+        const ovfLookup = ((hl & 0x8000) >> 15) | ((hl & 0x8000) >> 14) | ((result & 0x8000) >> 13);
         regPairs[RP_HL] = result & 0xFFFF;
         regs[R_F] = (result & 0x10000 ? FLAG_C : 0) |
                     (!(regPairs[RP_HL]) ? FLAG_Z : 0) |
                     ((regPairs[RP_HL] >> 8) & (FLAG_S | FLAG_X | FLAG_Y)) |
-                    ((lookup >> 4) & FLAG_V) |
-                    ((lookup & 0x08) ? FLAG_H : 0);
+                    overflowAddTable[ovfLookup] |
+                    (((hl ^ hl ^ result) >> 8) & FLAG_H);
         tstates += 15;
         break;
       }
@@ -727,13 +787,13 @@ export default (callbacks) => {
         const hl = regPairs[RP_HL];
         const sp = regPairs[RP_SP];
         const result = hl + sp + (regs[R_F] & FLAG_C);
-        const lookup = ((hl & 0x8800) >> 11) | ((sp & 0x8800) >> 10) | ((result & 0x8800) >> 9);
+        const ovfLookup = ((hl & 0x8000) >> 15) | ((sp & 0x8000) >> 14) | ((result & 0x8000) >> 13);
         regPairs[RP_HL] = result & 0xFFFF;
         regs[R_F] = (result & 0x10000 ? FLAG_C : 0) |
                     (!(regPairs[RP_HL]) ? FLAG_Z : 0) |
                     ((regPairs[RP_HL] >> 8) & (FLAG_S | FLAG_X | FLAG_Y)) |
-                    ((lookup >> 4) & FLAG_V) |
-                    ((lookup & 0x08) ? FLAG_H : 0);
+                    overflowAddTable[ovfLookup] |
+                    (((hl ^ sp ^ result) >> 8) & FLAG_H);
         tstates += 15;
         break;
       }
@@ -742,14 +802,14 @@ export default (callbacks) => {
         const hl = regPairs[RP_HL];
         const bc = regPairs[RP_BC];
         const result = hl - bc - (regs[R_F] & FLAG_C);
-        const lookup = ((hl & 0x8800) >> 11) | ((bc & 0x8800) >> 10) | ((result & 0x8800) >> 9);
+        const ovfLookup = ((hl & 0x8000) >> 15) | ((bc & 0x8000) >> 14) | ((result & 0x8000) >> 13);
         regPairs[RP_HL] = result & 0xFFFF;
         regs[R_F] = (result & 0x10000 ? FLAG_C : 0) |
                     FLAG_N |
                     (!(regPairs[RP_HL]) ? FLAG_Z : 0) |
                     ((regPairs[RP_HL] >> 8) & (FLAG_S | FLAG_X | FLAG_Y)) |
-                    ((lookup >> 4) & FLAG_V) |
-                    ((lookup & 0x08) ? FLAG_H : 0);
+                    overflowSubTable[ovfLookup] |
+                    (((hl ^ bc ^ result) >> 8) & FLAG_H);
         tstates += 15;
         break;
       }
@@ -758,14 +818,14 @@ export default (callbacks) => {
         const hl = regPairs[RP_HL];
         const de = regPairs[RP_DE];
         const result = hl - de - (regs[R_F] & FLAG_C);
-        const lookup = ((hl & 0x8800) >> 11) | ((de & 0x8800) >> 10) | ((result & 0x8800) >> 9);
+        const ovfLookup = ((hl & 0x8000) >> 15) | ((de & 0x8000) >> 14) | ((result & 0x8000) >> 13);
         regPairs[RP_HL] = result & 0xFFFF;
         regs[R_F] = (result & 0x10000 ? FLAG_C : 0) |
                     FLAG_N |
                     (!(regPairs[RP_HL]) ? FLAG_Z : 0) |
                     ((regPairs[RP_HL] >> 8) & (FLAG_S | FLAG_X | FLAG_Y)) |
-                    ((lookup >> 4) & FLAG_V) |
-                    ((lookup & 0x08) ? FLAG_H : 0);
+                    overflowSubTable[ovfLookup] |
+                    (((hl ^ de ^ result) >> 8) & FLAG_H);
         tstates += 15;
         break;
       }
@@ -773,14 +833,14 @@ export default (callbacks) => {
       case 0x62: { // SBC HL,HL
         const hl = regPairs[RP_HL];
         const result = hl - hl - (regs[R_F] & FLAG_C);
-        const lookup = ((hl & 0x8800) >> 11) | ((hl & 0x8800) >> 10) | ((result & 0x8800) >> 9);
+        const ovfLookup = ((hl & 0x8000) >> 15) | ((hl & 0x8000) >> 14) | ((result & 0x8000) >> 13);
         regPairs[RP_HL] = result & 0xFFFF;
         regs[R_F] = (result & 0x10000 ? FLAG_C : 0) |
                     FLAG_N |
                     (!(regPairs[RP_HL]) ? FLAG_Z : 0) |
                     ((regPairs[RP_HL] >> 8) & (FLAG_S | FLAG_X | FLAG_Y)) |
-                    ((lookup >> 4) & FLAG_V) |
-                    ((lookup & 0x08) ? FLAG_H : 0);
+                    overflowSubTable[ovfLookup] |
+                    (((hl ^ hl ^ result) >> 8) & FLAG_H);
         tstates += 15;
         break;
       }
@@ -789,14 +849,14 @@ export default (callbacks) => {
         const hl = regPairs[RP_HL];
         const sp = regPairs[RP_SP];
         const result = hl - sp - (regs[R_F] & FLAG_C);
-        const lookup = ((hl & 0x8800) >> 11) | ((sp & 0x8800) >> 10) | ((result & 0x8800) >> 9);
+        const ovfLookup = ((hl & 0x8000) >> 15) | ((sp & 0x8000) >> 14) | ((result & 0x8000) >> 13);
         regPairs[RP_HL] = result & 0xFFFF;
         regs[R_F] = (result & 0x10000 ? FLAG_C : 0) |
                     FLAG_N |
                     (!(regPairs[RP_HL]) ? FLAG_Z : 0) |
                     ((regPairs[RP_HL] >> 8) & (FLAG_S | FLAG_X | FLAG_Y)) |
-                    ((lookup >> 4) & FLAG_V) |
-                    ((lookup & 0x08) ? FLAG_H : 0);
+                    overflowSubTable[ovfLookup] |
+                    (((hl ^ sp ^ result) >> 8) & FLAG_H);
         tstates += 15;
         break;
       }
@@ -818,7 +878,7 @@ export default (callbacks) => {
                     FLAG_N |
                     halfcarrySubTable[lookup & 0x07] |
                     overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
+                    sz53Table[regs[R_A]];
         tstates += 8;
         break;
       }
@@ -1004,7 +1064,7 @@ export default (callbacks) => {
       case 0x57:
         regs[R_A] = regs[R_I];
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[regs[R_A]] |
+                    sz53Table[regs[R_A]] |
                     (iff2 ? FLAG_P : 0);
         tstates += 9;
         break;
@@ -1012,7 +1072,7 @@ export default (callbacks) => {
       case 0x5F:
         regs[R_A] = regs[R_R];
         regs[R_F] = (regs[R_F] & FLAG_C) |
-                    sz53pTable[regs[R_A]] |
+                    sz53Table[regs[R_A]] |
                     (iff2 ? FLAG_P : 0);
         tstates += 9;
         break;
@@ -1098,10 +1158,11 @@ export default (callbacks) => {
       const addr = (regPairs[rpIndex] + signedOffset) & 0xFFFF;
 
       const bit = (cbOpcode >> 3) & 0x07;
+      const destReg = cbOpcode & 0x07; // register to store result (undocumented); 6 = no store
       let value = readByte(addr);
 
       if (cbOpcode < 0x40) {
-        // Shifts and rotates
+        // Shifts and rotates — result also stored in destReg if destReg != 6
         if (cbOpcode < 0x08) {
           value = ((value << 1) | (value >> 7)) & 0xFF;
           regs[R_F] = (value & FLAG_C) | sz53pTable[value];
@@ -1137,10 +1198,13 @@ export default (callbacks) => {
           regs[R_F] |= sz53pTable[value];
         }
         writeByte(addr, value);
+        // Undocumented: store result in register (if destReg != 6)
+        if (destReg !== 6) setReg(destReg, value);
         tstates += 23;
       } else if (cbOpcode < 0x80) {
-        // BIT n,(IX/IY+d)
-        regs[R_F] = (regs[R_F] & FLAG_C) | FLAG_H | (value & (FLAG_X | FLAG_Y));
+        // BIT n,(IX/IY+d) — Y/X flags from high byte of address (undocumented)
+        const xySource = (addr >> 8) & 0xFF;
+        regs[R_F] = (regs[R_F] & FLAG_C) | FLAG_H | (xySource & (FLAG_X | FLAG_Y));
         if (!(value & (1 << bit))) {
           regs[R_F] |= FLAG_P | FLAG_Z;
         }
@@ -1149,14 +1213,16 @@ export default (callbacks) => {
         }
         tstates += 20;
       } else if (cbOpcode < 0xC0) {
-        // RES n,(IX/IY+d)
+        // RES n,(IX/IY+d) — also store in destReg if destReg != 6 (undocumented)
         value &= ~(1 << bit);
         writeByte(addr, value);
+        if (destReg !== 6) setReg(destReg, value);
         tstates += 23;
       } else {
-        // SET n,(IX/IY+d)
+        // SET n,(IX/IY+d) — also store in destReg if destReg != 6 (undocumented)
         value |= (1 << bit);
         writeByte(addr, value);
+        if (destReg !== 6) setReg(destReg, value);
         tstates += 23;
       }
       return;
@@ -1228,6 +1294,69 @@ export default (callbacks) => {
       case 0x2B: // DEC IX/IY
         regPairs[rpIndex] = (regPairs[rpIndex] - 1) & 0xFFFF;
         tstates += 10;
+        break;
+
+      // Undocumented: INC/DEC/LD with high/low byte of IX/IY
+      case 0x24: { // INC IXH/IYH
+        const val = (regPairs[rpIndex] >> 8) & 0xFF;
+        const result = (val + 1) & 0xFF;
+        regPairs[rpIndex] = (regPairs[rpIndex] & 0x00FF) | (result << 8);
+        regs[R_F] = (regs[R_F] & FLAG_C) |
+                    sz53Table[result] |
+                    ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
+                    ((val === 0x7F) ? FLAG_V : 0);
+        regs[R_F] &= ~FLAG_N;
+        tstates += 8;
+        break;
+      }
+
+      case 0x25: { // DEC IXH/IYH
+        const val = (regPairs[rpIndex] >> 8) & 0xFF;
+        const result = (val - 1) & 0xFF;
+        regPairs[rpIndex] = (regPairs[rpIndex] & 0x00FF) | (result << 8);
+        regs[R_F] = (regs[R_F] & FLAG_C) |
+                    sz53Table[result] |
+                    FLAG_N |
+                    ((val & 0x0F) === 0 ? FLAG_H : 0) |
+                    ((val === 0x80) ? FLAG_V : 0);
+        tstates += 8;
+        break;
+      }
+
+      case 0x26: // LD IXH/IYH,n
+        regPairs[rpIndex] = (regPairs[rpIndex] & 0x00FF) | (fetchByte() << 8);
+        tstates += 11;
+        break;
+
+      case 0x2C: { // INC IXL/IYL
+        const val = regPairs[rpIndex] & 0xFF;
+        const result = (val + 1) & 0xFF;
+        regPairs[rpIndex] = (regPairs[rpIndex] & 0xFF00) | result;
+        regs[R_F] = (regs[R_F] & FLAG_C) |
+                    sz53Table[result] |
+                    ((val & 0x0F) === 0x0F ? FLAG_H : 0) |
+                    ((val === 0x7F) ? FLAG_V : 0);
+        regs[R_F] &= ~FLAG_N;
+        tstates += 8;
+        break;
+      }
+
+      case 0x2D: { // DEC IXL/IYL
+        const val = regPairs[rpIndex] & 0xFF;
+        const result = (val - 1) & 0xFF;
+        regPairs[rpIndex] = (regPairs[rpIndex] & 0xFF00) | result;
+        regs[R_F] = (regs[R_F] & FLAG_C) |
+                    sz53Table[result] |
+                    FLAG_N |
+                    ((val & 0x0F) === 0 ? FLAG_H : 0) |
+                    ((val === 0x80) ? FLAG_V : 0);
+        tstates += 8;
+        break;
+      }
+
+      case 0x2E: // LD IXL/IYL,n
+        regPairs[rpIndex] = (regPairs[rpIndex] & 0xFF00) | fetchByte();
+        tstates += 11;
         break;
 
       case 0x34: { // INC (IX/IY+d)
@@ -1338,7 +1467,7 @@ export default (callbacks) => {
         regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
                     halfcarryAddTable[lookup & 0x07] |
                     overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
+                    sz53Table[regs[R_A]];
         tstates += 19;
         break;
       }
@@ -1354,7 +1483,7 @@ export default (callbacks) => {
         regs[R_F] = (result & 0x100 ? FLAG_C : 0) |
                     halfcarryAddTable[lookup & 0x07] |
                     overflowAddTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
+                    sz53Table[regs[R_A]];
         tstates += 19;
         break;
       }
@@ -1371,7 +1500,7 @@ export default (callbacks) => {
                     FLAG_N |
                     halfcarrySubTable[lookup & 0x07] |
                     overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
+                    sz53Table[regs[R_A]];
         tstates += 19;
         break;
       }
@@ -1388,7 +1517,7 @@ export default (callbacks) => {
                     FLAG_N |
                     halfcarrySubTable[lookup & 0x07] |
                     overflowSubTable[lookup >> 4] |
-                    sz53pTable[regs[R_A]];
+                    sz53Table[regs[R_A]];
         tstates += 19;
         break;
       }
@@ -1471,8 +1600,55 @@ export default (callbacks) => {
         tstates += 10;
         break;
 
-      default:
-        // For opcodes that don't use the index register, execute as normal.
+      default: {
+        // Undocumented: LD r,IXH/IXL and LD IXH/IXL,r (0x40-0x7F, excluding (HL) forms)
+        if (opcode >= 0x40 && opcode <= 0x7F && opcode !== 0x76) {
+          const dst = (opcode >> 3) & 7;
+          const src = opcode & 7;
+          // Only handle if src or dst is H(4) or L(5), and neither is (HL)=6
+          if (src !== 6 && dst !== 6 && (src === 4 || src === 5 || dst === 4 || dst === 5)) {
+            const getIXReg = (r) => {
+              switch (r) {
+                case 0: return regs[R_B];
+                case 1: return regs[R_C];
+                case 2: return regs[R_D];
+                case 3: return regs[R_E];
+                case 4: return (regPairs[rpIndex] >> 8) & 0xFF; // IXH/IYH
+                case 5: return regPairs[rpIndex] & 0xFF;        // IXL/IYL
+                case 7: return regs[R_A];
+                default: return 0;
+              }
+            };
+            const setIXReg = (r, v) => {
+              switch (r) {
+                case 0: regs[R_B] = v; break;
+                case 1: regs[R_C] = v; break;
+                case 2: regs[R_D] = v; break;
+                case 3: regs[R_E] = v; break;
+                case 4: regPairs[rpIndex] = (regPairs[rpIndex] & 0x00FF) | ((v & 0xFF) << 8); break;
+                case 5: regPairs[rpIndex] = (regPairs[rpIndex] & 0xFF00) | (v & 0xFF); break;
+                case 7: regs[R_A] = v; break;
+              }
+            };
+            setIXReg(dst, getIXReg(src));
+            tstates += 8;
+            break;
+          }
+        }
+
+        // Undocumented: arithmetic/logic with IXH/IXL (0x80-0xBF, src=H(4) or L(5))
+        if (opcode >= 0x80 && opcode <= 0xBF) {
+          const src = opcode & 7;
+          if (src === 4 || src === 5) {
+            const value = src === 4 ? (regPairs[rpIndex] >> 8) & 0xFF : regPairs[rpIndex] & 0xFF;
+            const op = (opcode >> 3) & 7;
+            Z80_ALU[op](value);
+            tstates += 8;
+            break;
+          }
+        }
+
+        // For all other unrecognized opcodes, fall through to base instruction.
         // Account for the DD/FD prefix M1 cycle (4 T-states) here, since
         // the recognized DD/FD instructions bake their prefix cost into their
         // own T-state totals, but the default path delegates to executeInstruction().
@@ -1483,6 +1659,7 @@ export default (callbacks) => {
         regPairs[RP_PC] = (regPairs[RP_PC] - 1) & 0xFFFF;
         executeInstruction();
         break;
+      }
     }
   };
 
@@ -1854,6 +2031,7 @@ export default (callbacks) => {
         break;
 
       case 0x27: { // DAA (Decimal Adjust Accumulator)
+        const aBefore = regs[R_A];
         let add = 0;
         let carry = regs[R_F] & FLAG_C;
         if ((regs[R_F] & FLAG_H) || ((regs[R_A] & 0x0F) > 9)) {
@@ -1870,7 +2048,9 @@ export default (callbacks) => {
         } else {
           regs[R_A] = (regs[R_A] + add) & 0xFF;
         }
-        regs[R_F] = (regs[R_F] & FLAG_N) | carry | sz53pTable[regs[R_A]] | parityTable[regs[R_A]];
+        regs[R_F] = (regs[R_F] & FLAG_N) | carry |
+                    sz53pTable[regs[R_A]] |
+                    ((aBefore ^ regs[R_A]) & FLAG_H);
         tstates += 4;
         break;
       }
@@ -2787,6 +2967,7 @@ export default (callbacks) => {
       case "IFF1": iff1 = value ? 1 : 0; break;
       case "IFF2": iff2 = value ? 1 : 0; break;
       case "IM": im = value & 0x03; break;
+      case "WZ": memptr = value & 0xFFFF; break;
       default:
         throw new Error(`Unknown register: ${reg}`);
     }

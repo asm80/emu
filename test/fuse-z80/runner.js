@@ -44,7 +44,7 @@ const parseTestsIn = (text) => {
       iy:     parseInt(regTokens[9], 16),
       sp:     parseInt(regTokens[10], 16),
       pc:     parseInt(regTokens[11], 16),
-      // regTokens[12] is MEMPTR — not used
+      memptr: regTokens[12] ? parseInt(regTokens[12], 16) : 0,
     };
 
     // Special line: I R IFF1 IFF2 IM <halted> <tstates>
@@ -102,11 +102,16 @@ const parseTestsExpected = (text) => {
     const name = lines[i].trim();
     i++;
 
-    // Skip event lines: second token is a memory/port-access type keyword
+    // Parse event lines: second token is a memory/port-access type keyword
+    // Collect port reads (PR) so they can be replayed in the CPU portIn callback
+    const portReadQueue = [];
     while (i < lines.length) {
       const tokens = lines[i].trim().split(/\s+/);
-      if (/^(MC|MR|MW|PC|PR|PW)$/.test(tokens[1])) { i++; continue; }
-      break;
+      if (!/^(MC|MR|MW|PC|PR|PW)$/.test(tokens[1])) break;
+      if (tokens[1] === "PR" && tokens[3] !== undefined) {
+        portReadQueue.push(parseInt(tokens[3], 16));
+      }
+      i++;
     }
 
     // Register pair line: AF BC DE HL AF' BC' DE' HL' IX IY SP PC MEMPTR
@@ -156,7 +161,7 @@ const parseTestsExpected = (text) => {
       }
     }
 
-    tests.push({ name, regs, special, memChanges });
+    tests.push({ name, regs, special, memChanges, portReadQueue });
   }
 
   return tests;
@@ -184,9 +189,13 @@ const runTest = (input, expected) => {
   }
 
   // A fresh CPU instance is created per test so cpu.T() starts at 0
+  const portReadQueue = (expected.portReadQueue || []).slice();
+  let portReadIdx = 0;
   const cpu = z80({
     byteAt: (addr) => mem[addr],
     byteTo: (addr, val) => { mem[addr] = val & 0xFF; },
+    portIn: () => portReadIdx < portReadQueue.length ? portReadQueue[portReadIdx++] : 0xFF,
+    portOut: () => {},
   });
 
   // Set registers
@@ -207,6 +216,7 @@ const runTest = (input, expected) => {
   cpu.set("IFF1", input.special.iff1);
   cpu.set("IFF2", input.special.iff2);
   cpu.set("IM",   input.special.im);
+  cpu.set("WZ",   input.regs.memptr || 0);
 
   // Execute for the test's T-state budget
   cpu.steps(input.special.tstates);
