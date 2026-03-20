@@ -21,7 +21,7 @@ QUnit.module("Z80 - ED Prefix (Extended Instructions)", () => {
    */
   const createTestCPU = () => {
     const mem = new Uint8Array(65536);
-    const ports = new Uint8Array(256);
+    const ports = new Uint8Array(65536);
 
     const cpu = z80({
       byteAt: (addr) => mem[addr] || 0,
@@ -77,6 +77,7 @@ QUnit.module("Z80 - ED Prefix (Extended Instructions)", () => {
     QUnit.test("LDIR - Load, increment and repeat", (assert) => {
       const { cpu, mem } = createTestCPU();
 
+      // One step = one iteration. With BC>1, PC stays on the instruction.
       cpu.set("HL", 0x1000);
       cpu.set("DE", 0x2000);
       cpu.set("BC", 0x0003);
@@ -86,21 +87,22 @@ QUnit.module("Z80 - ED Prefix (Extended Instructions)", () => {
       mem[0] = 0xED;
       mem[1] = 0xB0; // LDIR
 
-      cpu.step();
+      cpu.step(); // one iteration: [HL]→[DE], HL++, DE++, BC--
 
       const state = cpu.status();
-      assert.equal(mem[0x2000], 0x11, "Byte 1 transferred");
-      assert.equal(mem[0x2001], 0x22, "Byte 2 transferred");
-      assert.equal(mem[0x2002], 0x33, "Byte 3 transferred");
-      assert.equal(state.hl, 0x1003, "HL advanced by 3");
-      assert.equal(state.de, 0x2003, "DE advanced by 3");
-      assert.equal(state.bc, 0x0000, "BC = 0");
-      assert.equal(state.pc, 2, "PC advances after completion");
+      assert.equal(mem[0x2000], 0x11, "First byte transferred");
+      assert.equal(mem[0x2001], 0, "Second byte not yet transferred");
+      assert.equal(state.hl, 0x1001, "HL incremented once");
+      assert.equal(state.de, 0x2001, "DE incremented once");
+      assert.equal(state.bc, 0x0002, "BC decremented once");
+      assert.equal(state.pc, 0, "PC stays on LDIR while BC > 0");
+      assert.equal(state.f & 0x04, 0x04, "P/V set (BC != 0)");
     });
 
     QUnit.test("LDDR - Load, decrement and repeat", (assert) => {
       const { cpu, mem } = createTestCPU();
 
+      // One step = one iteration. With BC>1, PC stays on the instruction.
       cpu.set("HL", 0x1002);
       cpu.set("DE", 0x2002);
       cpu.set("BC", 0x0003);
@@ -110,13 +112,16 @@ QUnit.module("Z80 - ED Prefix (Extended Instructions)", () => {
       mem[0] = 0xED;
       mem[1] = 0xB8; // LDDR
 
-      cpu.step();
+      cpu.step(); // one iteration: [HL]→[DE], HL--, DE--, BC--
 
       const state = cpu.status();
-      assert.equal(mem[0x2000], 0xAA, "Byte 1 transferred");
-      assert.equal(mem[0x2001], 0xBB, "Byte 2 transferred");
-      assert.equal(mem[0x2002], 0xCC, "Byte 3 transferred");
-      assert.equal(state.bc, 0x0000, "BC = 0");
+      assert.equal(mem[0x2002], 0xCC, "First byte transferred (from [HL] to [DE])");
+      assert.equal(mem[0x2001], 0, "Second byte not yet transferred");
+      assert.equal(state.hl, 0x1001, "HL decremented once");
+      assert.equal(state.de, 0x2001, "DE decremented once");
+      assert.equal(state.bc, 0x0002, "BC decremented once");
+      assert.equal(state.pc, 0, "PC stays on LDDR while BC > 0");
+      assert.equal(state.f & 0x04, 0x04, "P/V set (BC != 0)");
     });
   });
 
@@ -161,42 +166,45 @@ QUnit.module("Z80 - ED Prefix (Extended Instructions)", () => {
     QUnit.test("CPIR - Compare, increment and repeat until found", (assert) => {
       const { cpu, mem } = createTestCPU();
 
+      // One step = one comparison. Not found + BC>1 → HL++, BC--, PC stays.
       cpu.set("HL", 0x1000);
       cpu.set("BC", 0x0005);
       cpu.set("A", 0x55);
-      mem[0x1000] = 0x11;
-      mem[0x1001] = 0x22;
-      mem[0x1002] = 0x55; // Target
+      mem[0x1000] = 0x11; // not a match
+      mem[0x1001] = 0x55; // match is here (not reached yet)
       mem[0] = 0xED;
       mem[1] = 0xB1; // CPIR
 
-      cpu.step();
+      cpu.step(); // one iteration: compare [HL] with A, HL++, BC--
 
       const state = cpu.status();
-      assert.equal(state.hl, 0x1003, "HL points past match");
-      assert.equal(state.bc, 0x0002, "BC decremented 3 times");
-      assert.equal(state.f & 0x40, 0x40, "Z set (found)");
+      assert.equal(state.hl, 0x1001, "HL incremented once");
+      assert.equal(state.bc, 0x0004, "BC decremented once");
+      assert.equal(state.f & 0x40, 0, "Z clear (no match yet)");
+      assert.equal(state.f & 0x04, 0x04, "P/V set (BC != 0)");
+      assert.equal(state.pc, 0, "PC stays on CPIR while not found and BC > 0");
     });
 
     QUnit.test("CPDR - Compare, decrement and repeat", (assert) => {
       const { cpu, mem } = createTestCPU();
 
+      // One step = one comparison. Not found + BC>1 → HL--, BC--, PC stays.
       cpu.set("HL", 0x1004);
       cpu.set("BC", 0x0005);
       cpu.set("A", 0x77);
-      mem[0x1000] = 0x77; // Target
-      mem[0x1001] = 0x22;
-      mem[0x1002] = 0x33;
-      mem[0x1003] = 0x44;
-      mem[0x1004] = 0x55;
+      mem[0x1003] = 0x77; // match (not reached yet on first step)
+      mem[0x1004] = 0x55; // not a match
       mem[0] = 0xED;
       mem[1] = 0xB9; // CPDR
 
-      cpu.step();
+      cpu.step(); // one iteration: compare [HL] with A, HL--, BC--
 
       const state = cpu.status();
-      assert.equal(state.f & 0x40, 0x40, "Z set (found)");
-      assert.equal(state.hl, 0x0FFF, "HL points before match");
+      assert.equal(state.hl, 0x1003, "HL decremented once");
+      assert.equal(state.bc, 0x0004, "BC decremented once");
+      assert.equal(state.f & 0x40, 0, "Z clear (no match yet)");
+      assert.equal(state.f & 0x04, 0x04, "P/V set (BC != 0)");
+      assert.equal(state.pc, 0, "PC stays on CPDR while not found and BC > 0");
     });
   });
 
@@ -266,17 +274,18 @@ QUnit.module("Z80 - ED Prefix (Extended Instructions)", () => {
     QUnit.test("INI - Input and increment", (assert) => {
       const { cpu, mem, ports } = createTestCPU();
 
+      // INI reads from port BC (16-bit). B=0x03, C=0x10 → port 0x0310.
       cpu.set("HL", 0x2000);
       cpu.set("B", 0x03);
-      cpu.set("C", 0x10); // Port address
-      ports[0x10] = 0x88;
+      cpu.set("C", 0x10);
+      ports[0x0310] = 0x88; // full BC address
       mem[0] = 0xED;
       mem[1] = 0xA2; // INI
 
       cpu.step();
 
       const state = cpu.status();
-      assert.equal(mem[0x2000], 0x88, "Byte read from port");
+      assert.equal(mem[0x2000], 0x88, "Byte read from port BC into [HL]");
       assert.equal(state.hl, 0x2001, "HL incremented");
       assert.equal(state.b, 0x02, "B decremented");
     });
@@ -284,37 +293,41 @@ QUnit.module("Z80 - ED Prefix (Extended Instructions)", () => {
     QUnit.test("IND - Input and decrement", (assert) => {
       const { cpu, mem, ports } = createTestCPU();
 
+      // IND reads from port BC (16-bit). B=0x01, C=0x20 → port 0x0120.
       cpu.set("HL", 0x2000);
       cpu.set("B", 0x01);
       cpu.set("C", 0x20);
-      ports[0x20] = 0x99;
+      ports[0x0120] = 0x99; // full BC address
       mem[0] = 0xED;
       mem[1] = 0xAA; // IND
 
       cpu.step();
 
       const state = cpu.status();
-      assert.equal(mem[0x2000], 0x99, "Byte read from port");
+      assert.equal(mem[0x2000], 0x99, "Byte read from port BC into [HL]");
       assert.equal(state.hl, 0x1FFF, "HL decremented");
-      assert.equal(state.b, 0x00, "B = 0");
+      assert.equal(state.b, 0x00, "B decremented to 0");
     });
 
     QUnit.test("INIR - Input, increment and repeat", (assert) => {
       const { cpu, mem, ports } = createTestCPU();
 
+      // One step = one iteration. B=0x03, C=0x30 → port 0x0330.
+      // With B>1 after decrement, PC stays on INIR.
       cpu.set("HL", 0x3000);
       cpu.set("B", 0x03);
       cpu.set("C", 0x30);
-      ports[0x30] = 0xAA;
+      ports[0x0330] = 0xAA; // full BC address
       mem[0] = 0xED;
       mem[1] = 0xB2; // INIR
 
-      cpu.step();
+      cpu.step(); // one iteration: IN [HL] from port BC, HL++, B--
 
       const state = cpu.status();
-      assert.equal(state.b, 0x00, "B = 0 after repeat");
-      assert.equal(state.hl, 0x3003, "HL advanced by 3");
-      assert.equal(mem[0x3000], 0xAA, "First byte");
+      assert.equal(mem[0x3000], 0xAA, "Byte read into [HL]");
+      assert.equal(state.hl, 0x3001, "HL incremented once");
+      assert.equal(state.b, 0x02, "B decremented once");
+      assert.equal(state.pc, 0, "PC stays on INIR while B > 0");
     });
 
     QUnit.test("OUTI - Output and increment", (assert) => {
@@ -356,6 +369,8 @@ QUnit.module("Z80 - ED Prefix (Extended Instructions)", () => {
     QUnit.test("OTIR - Output, increment and repeat", (assert) => {
       const { cpu, mem, ports } = createTestCPU();
 
+      // One step = one iteration. B=0x03, C=0x60.
+      // With B>1 after decrement, PC stays on OTIR.
       cpu.set("HL", 0x6000);
       cpu.set("B", 0x03);
       cpu.set("C", 0x60);
@@ -365,11 +380,13 @@ QUnit.module("Z80 - ED Prefix (Extended Instructions)", () => {
       mem[0] = 0xED;
       mem[1] = 0xB3; // OTIR
 
-      cpu.step();
+      cpu.step(); // one iteration: OUT port C from [HL], HL++, B--
 
       const state = cpu.status();
-      assert.equal(state.b, 0x00, "B = 0 after repeat");
-      assert.equal(state.hl, 0x6003, "HL advanced");
+      assert.equal(ports[0x60], 0xDD, "First byte output to port C");
+      assert.equal(state.hl, 0x6001, "HL incremented once");
+      assert.equal(state.b, 0x02, "B decremented once");
+      assert.equal(state.pc, 0, "PC stays on OTIR while B > 0");
     });
   });
 
