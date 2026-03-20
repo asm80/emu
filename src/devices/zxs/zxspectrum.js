@@ -747,10 +747,11 @@ export const createZXS = (options = {}) => {
         }
       }
 
-      // Reset interrupt counter to 0 so the first interrupt fires immediately
-      // at the start of the first frame() call after loading the snapshot.
-      // This ensures the ISR runs within that first frame, giving a consistent
-      // timing baseline (matches the original SNA load semantics).
+      // Set to 0 so the frame loop fires the interrupt at the very start of
+      // the first frame() call after loading the snapshot, giving the ISR
+      // T-states to execute within that frame.
+      // Note: relies on cpu.steps(0) being a no-op even when halted;
+      // see the HALT cycle burn loop at the end of steps() in z80.js.
       interruptCounter = 0;
       initialized = true;
     },
