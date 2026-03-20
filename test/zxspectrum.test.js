@@ -404,3 +404,51 @@ QUnit.module("128k paging", () => {
   });
 
 });
+
+QUnit.module("ZXS AY 48k", () => {
+  QUnit.test("AY audio output is non-zero in 48k mode after programming volume", (assert) => {
+    const zxs = createZXS({ model: "48k", sampleRate: 44100 });
+    zxs.reset();
+
+    // Build a minimal 48k SNA that places a Z80 program at 0x4000 with PC=0x4000.
+    // The program programs AY: select reg 8 (vol A), write 0x0F (max volume).
+    // After HALT, the AY is live and ay.generate() should produce non-zero samples.
+    //
+    // Program bytes at address 0x4000 (= ram48 offset 0):
+    //   01 FD FF  LD BC, 0xFFFD  ; AY select-register port
+    //   3E 08     LD A, 8        ; register 8 = channel A volume
+    //   ED 79     OUT (C), A     ; select register 8
+    //   01 FD BF  LD BC, 0xBFFD  ; AY data port
+    //   3E 0F     LD A, 0x0F    ; volume = 15 (max), no envelope
+    //   ED 79     OUT (C), A     ; write volume
+    //   76        HALT
+    const prog = [
+      0x01, 0xFD, 0xFF,  // LD BC, 0xFFFD
+      0x3E, 0x08,        // LD A, 8
+      0xED, 0x79,        // OUT (C), A
+      0x01, 0xFD, 0xBF,  // LD BC, 0xBFFD
+      0x3E, 0x0F,        // LD A, 0x0F
+      0xED, 0x79,        // OUT (C), A
+      0x76,              // HALT
+    ];
+
+    // Construct a 48k SNA (49179 bytes).
+    // Header: SP = 0xFFFE, IM = 1. PC is stored on the stack.
+    // ram48 is indexed from 0 (= address 0x4000). SNA RAM starts at byte 27.
+    // Stack at 0xFFFE = ram48 offset 0xBFFE = SNA offset 27+0xBFFE = 49177.
+    const sna = new Uint8Array(49179);
+    sna[23] = 0xFE; sna[24] = 0xFF;  // SP = 0xFFFE
+    sna[25] = 1;                      // IM = 1
+    sna[49177] = 0x00;                // PC low  = 0x00 → PC = 0x4000
+    sna[49178] = 0x40;                // PC high = 0x40
+    for (let i = 0; i < prog.length; i++) sna[27 + i] = prog[i];
+
+    zxs.loadSNA(sna);
+
+    // Run one frame — CPU executes the program, programs AY volume, then HALTs.
+    const result = zxs.frame(69888, new Uint8Array(8));
+    const audio = result.audio;
+    const hasNonZero = Array.from(audio).some(s => s !== 0);
+    assert.true(hasNonZero, "AY audio should be non-zero on 48k after programming channel A volume");
+  });
+});

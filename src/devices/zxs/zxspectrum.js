@@ -380,8 +380,8 @@ export const createZXS = (options = {}) => {
       return (0xA0 | earBit | (~keys & 0x1F));
     }
 
-    // AY register read (128k only)
-    if (is128k && (fullAddr & 0xC002) === 0xC000) return ay.readRegister();
+    // AY register read
+    if ((fullAddr & 0xC002) === 0xC000) return ay.readRegister();
 
     return 0xFF;
   };
@@ -412,11 +412,11 @@ export const createZXS = (options = {}) => {
       if (val & 0x20) pagingDisabled = true;
     }
 
-    // AY register select (128k only)
-    if (is128k && (fullAddr & 0xC002) === 0xC000) ay.writeRegisterSelect(val);
+    // AY register select
+    if ((fullAddr & 0xC002) === 0xC000) ay.writeRegisterSelect(val);
 
-    // AY register write (128k only)
-    if (is128k && (fullAddr & 0xC002) === 0x8000) ay.writeRegisterValue(val);
+    // AY register write
+    if ((fullAddr & 0xC002) === 0x8000) ay.writeRegisterValue(val);
   };
 
   // ── CPU ───────────────────────────────────────────────────────────────────
@@ -613,16 +613,10 @@ export const createZXS = (options = {}) => {
       // Generate beeper audio
       const numSamples = generateBeeper(tStates);
 
-      // Mix AY (128k only)
-      if (is128k) {
-        const ayBuf = ay.generate(tStates);
-        for (let i = 0; i < numSamples; i++) {
-          audioBuffer[i] = beeperBuf[i] * 0.5 + (i < ayBuf.length ? ayBuf[i] : 0) * 0.5;
-        }
-      } else {
-        for (let i = 0; i < numSamples; i++) {
-          audioBuffer[i] = beeperBuf[i];
-        }
+      // Mix AY
+      const ayBuf = ay.generate(tStates);
+      for (let i = 0; i < numSamples; i++) {
+        audioBuffer[i] = beeperBuf[i] * 0.5 + (i < ayBuf.length ? ayBuf[i] : 0) * 0.5;
       }
 
       frameCount++;
