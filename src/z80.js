@@ -2896,6 +2896,17 @@ export default (callbacks) => {
 
       executeInstruction();
     }
+
+    // When halted with no pending interrupt, the CPU continues executing NOP-like
+    // 4-T-state HALT cycles until an interrupt or NMI wakes it. Advance tstates
+    // to targetTstates so that cpu.steps(N) always consumes exactly N T-states
+    // (instruction-rounded), even when the CPU is halted. Without this, the frame
+    // loop in zxspectrum.js would see actual=0 and re-trigger the interrupt
+    // condition on every iteration, causing double-interrupts per frame.
+    if (halted && tstates < targetTstates) {
+      const haltCycles = Math.ceil((targetTstates - tstates) / 4);
+      tstates += haltCycles * 4;
+    }
   };
 
   /**
