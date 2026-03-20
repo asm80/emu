@@ -1653,10 +1653,9 @@ export default (callbacks) => {
 
       case 0x10: { // DJNZ n (Decrement B and Jump if Not Zero)
         regs[R_B] = (regs[R_B] - 1) & 0xFF;
-        tstates += 1;
         if (regs[R_B]) {
           const offset = fetchByte();
-          tstates += 12;
+          tstates += 13;
           regPairs[RP_PC] = (regPairs[RP_PC] + (offset & 0x80 ? offset - 0x100 : offset)) & 0xFFFF;
         } else {
           regPairs[RP_PC] = (regPairs[RP_PC] + 1) & 0xFFFF;
