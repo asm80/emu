@@ -448,7 +448,7 @@ QUnit.module("ZXS AY 48k", () => {
     // Run one frame — CPU executes the program, programs AY volume, then HALTs.
     const result = zxs.frame(69888, new Uint8Array(8));
     const audio = result.audio;
-    const hasNonZero = Array.from(audio).some(s => s !== 0);
+    const hasNonZero = audio.some(s => s !== 0);
     assert.true(hasNonZero, "AY audio should be non-zero on 48k after programming channel A volume");
   });
 });

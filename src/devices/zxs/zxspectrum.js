@@ -616,7 +616,8 @@ export const createZXS = (options = {}) => {
       // Mix AY
       const ayBuf = ay.generate(tStates);
       for (let i = 0; i < numSamples; i++) {
-        audioBuffer[i] = beeperBuf[i] * 0.5 + (i < ayBuf.length ? ayBuf[i] : 0) * 0.5;
+        const mixed = beeperBuf[i] + (i < ayBuf.length ? ayBuf[i] : 0);
+        audioBuffer[i] = mixed > 1.0 ? 1.0 : mixed;
       }
 
       frameCount++;
