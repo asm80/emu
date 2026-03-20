@@ -208,7 +208,7 @@ const runTest = (input, expected) => {
   cpu.set("IFF2", input.special.iff2);
   cpu.set("IM",   input.special.im);
 
-  // Execute — steps(1) always completes exactly one instruction
+  // Execute for the test's T-state budget
   cpu.steps(input.special.tstates);
 
   const state = cpu.status();
@@ -281,12 +281,15 @@ const main = () => {
 
   let passed = 0;
   let failed = 0;
+  let skipped = 0;
   const failures = [];
 
   for (let i = 0; i < testsIn.length; i++) {
     const mismatches = runTest(testsIn[i], testsExp[i]);
     if (mismatches.length === 0) {
       passed++;
+    } else if (mismatches[0].startsWith("SKIPPED:")) {
+      skipped++;
     } else {
       failed++;
       failures.push({ name: testsIn[i].name, mismatches });
@@ -299,8 +302,12 @@ const main = () => {
     for (const m of mismatches) console.log(m);
   }
 
-  console.log(`\nFUSE Z80: ${passed} passed, ${failed} failed`);
+  const skipNote = skipped > 0 ? `, ${skipped} skipped` : "";
+  console.log(`\nFUSE Z80: ${passed} passed, ${failed} failed${skipNote}`);
   process.exit(failed > 0 ? 1 : 0);
 };
 
-main();
+// Only run when executed directly (not when imported by QUnit)
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main();
+}
