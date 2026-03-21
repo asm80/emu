@@ -483,3 +483,142 @@ QUnit.module("ZXS AY 48k", () => {
     assert.true(hasNonZero, "AY audio should be non-zero on 48k after programming channel A volume");
   });
 });
+
+// ── Floating bus ──────────────────────────────────────────────────────────────
+
+QUnit.module("floating bus (48k)", () => {
+
+  QUnit.test("returns 0xFF during top border (T < 14335)", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.floatingBusAt(0), 0xFF);
+    assert.strictEqual(zxs.floatingBusAt(14334), 0xFF);
+  });
+
+  QUnit.test("returns 0xFF during horizontal blanking (col >= 128)", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.floatingBusAt(14335 + 128), 0xFF);
+    assert.strictEqual(zxs.floatingBusAt(14335 + 223), 0xFF);
+  });
+
+  QUnit.test("returns 0xFF after active display (line >= 192)", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.floatingBusAt(14335 + 192 * 224), 0xFF);
+  });
+
+  QUnit.test("returns pixel byte at phase 0 (line 0, col 0)", (assert) => {
+    const zxs = make48();
+    const ram = zxs.getRAM();
+    ram[0x0000] = 0xAB;
+    ram[0x1800] = 0xCD;
+    assert.strictEqual(zxs.floatingBusAt(14335), 0xAB);
+  });
+
+  QUnit.test("returns attr byte at phase 2 (line 0, col 2)", (assert) => {
+    const zxs = make48();
+    const ram = zxs.getRAM();
+    ram[0x0000] = 0xAB;
+    ram[0x1800] = 0xCD;
+    assert.strictEqual(zxs.floatingBusAt(14337), 0xCD);
+  });
+
+  QUnit.test("returns pixel byte at phase 4 (line 0, col 4)", (assert) => {
+    const zxs = make48();
+    const ram = zxs.getRAM();
+    ram[0x0001] = 0x55;
+    assert.strictEqual(zxs.floatingBusAt(14339), 0x55);
+  });
+
+  QUnit.test("returns attr byte at phase 6 (line 0, col 6)", (assert) => {
+    const zxs = make48();
+    const ram = zxs.getRAM();
+    ram[0x1801] = 0xEF; // xByte=1 -> attrAddr = 0x1801
+    assert.strictEqual(zxs.floatingBusAt(14341), 0xEF);
+  });
+
+  QUnit.test("correct pixel addr for line 64 (third of screen)", (assert) => {
+    // y=64: pixelAddr = 0x0800
+    const zxs = make48();
+    const ram = zxs.getRAM();
+    ram[0x0800] = 0x77;
+    assert.strictEqual(zxs.floatingBusAt(14335 + 64 * 224), 0x77);
+  });
+
+  QUnit.test("portIn odd address returns floating bus value (not 0xFF)", (assert) => {
+    const zxs = make48();
+    const ram = zxs.getRAM();
+    ram[0x0000] = 0x42;
+    ram[0x1800] = 0x99;
+    const val = zxs.floatingBusAt(14335);
+    assert.strictEqual(val, 0x42);
+  });
+
+});
+
+// ── Contention table ──────────────────────────────────────────────────────────
+
+QUnit.module("contention table (48k)", () => {
+
+  QUnit.test("delay is 0 before active display (T=0)", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.contentionAt(0), 0);
+  });
+
+  QUnit.test("delay is 0 at last T before active display (T=14334)", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.contentionAt(14334), 0);
+  });
+
+  QUnit.test("delay is 6 at T=14335 (start of active, seq=0)", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.contentionAt(14335), 6);
+  });
+
+  QUnit.test("delay pattern for T=14335..14342 is 6,5,4,3,2,1,0,0", (assert) => {
+    const zxs = make48();
+    const expected = [6, 5, 4, 3, 2, 1, 0, 0];
+    for (let i = 0; i < 8; i++) {
+      assert.strictEqual(zxs.contentionAt(14335 + i), expected[i],
+        `T=${14335 + i} delay=${expected[i]}`);
+    }
+  });
+
+  QUnit.test("delay is 0 at col=128 (horizontal blanking start)", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.contentionAt(14335 + 128), 0);
+  });
+
+  QUnit.test("delay is 0 after all active lines", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.contentionAt(57343), 0);
+  });
+
+  QUnit.test("second active line starts with delay 6", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.contentionAt(14335 + 224), 6);
+  });
+
+});
+
+// ── I/O contention ────────────────────────────────────────────────────────────
+
+QUnit.module("I/O contention accounting (48k)", () => {
+
+  QUnit.test("reading even port during active display accumulates contention", (assert) => {
+    const zxs = make48();
+    // At T=14335: pre=6, post=contentionAt(14336)=5 → total = 6+1+5+3 = 15
+    assert.strictEqual(zxs.ioContentionForPort(0xFE, 0x00FE, 14335), 6 + 1 + 5 + 3);
+  });
+
+  QUnit.test("reading odd port outside contended range returns 3", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.ioContentionForPort(0xFF, 0x00FF, 0), 3);
+  });
+
+  QUnit.test("reading odd port in contended addr range during active display", (assert) => {
+    // At T=14335: 3 × (contend+1): (6+1)+(5+1)+(4+1) = 18
+    const zxs = make48();
+    // delays: T=14335(6+1=7), T=14342(0+1=1), T=14343(6+1=7) = 15
+    assert.strictEqual(zxs.ioContentionForPort(0xFF, 0x7FFF, 14335), 15);
+  });
+
+});

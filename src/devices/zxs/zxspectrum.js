@@ -312,6 +312,135 @@ export const createZXS = (options = {}) => {
 
   let borderColor = 7;
 
+  // ── Floating bus & contention ─────────────────────────────────────────────
+
+  const SCREEN_START_T_48  = 14335;
+  const SCREEN_START_T_128 = 14361;
+  const TSTATE_PER_LINE_48  = 224;
+  const TSTATE_PER_LINE_128 = 228;
+  const FRAME_T_48  = 69888;
+  const FRAME_T_128 = 70908;
+
+  /**
+   * Return the ULA floating bus byte visible at the given frame-relative T-state.
+   *
+   * During active display the ULA fetches pixel and attribute bytes from VRAM
+   * in an 8-T-state cycle. When the CPU reads an unhandled I/O port the data
+   * bus carries the last byte the ULA drove, so programs can sniff VRAM content
+   * via IN A,(FF) (or any odd port).
+   *
+   * @param {number} frameT - T-states elapsed since start of this frame (≥ 0)
+   * @returns {number} Byte value 0–255
+   */
+  const floatingBusAt = (frameT) => {
+    const screenStart = is128k ? SCREEN_START_T_128 : SCREEN_START_T_48;
+    const lineT       = is128k ? TSTATE_PER_LINE_128 : TSTATE_PER_LINE_48;
+
+    const relT = frameT - screenStart;
+    if (relT < 0) return 0xFF;                     // top border / retrace
+
+    const line = Math.floor(relT / lineT);
+    if (line >= ACTIVE_LINES) return 0xFF;          // bottom border / retrace
+
+    const col = relT % lineT;
+    if (col >= 128) return 0xFF;                    // horizontal blanking
+
+    const fetch = col >> 3;          // which 8-T group (0–15)
+    const phase = col & 7;           // position within group (0–7)
+    const xByte = (fetch << 1) + (phase >= 4 ? 1 : 0);  // byte column 0–31
+    const y     = line;
+
+    const pixelAddr = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | xByte;
+    const attrAddr  = 0x1800 | ((y >> 3) * 32) | xByte;
+
+    const isAttr = phase === 2 || phase === 3 || phase === 6 || phase === 7;
+
+    if (is128k) {
+      const base = screenBank * 16384;
+      return isAttr ? ram128[base + attrAddr] : ram128[base + pixelAddr];
+    }
+    return isAttr ? ram48[attrAddr] : ram48[pixelAddr];
+  };
+
+  /**
+   * Build a per-T-state contention delay lookup table for one full frame.
+   *
+   * Each entry is the number of extra T-states the ULA inserts when the CPU
+   * accesses contended memory or an even I/O port at that T-state.
+   *
+   * @returns {Uint8Array} Table of length frameCycleCount
+   */
+  const buildContentionTable = () => {
+    const frameLen    = is128k ? FRAME_T_128  : FRAME_T_48;
+    const screenStart = is128k ? SCREEN_START_T_128 : SCREEN_START_T_48;
+    const lineT       = is128k ? TSTATE_PER_LINE_128 : TSTATE_PER_LINE_48;
+    const table       = new Uint8Array(frameLen);
+
+    for (let line = 0; line < ACTIVE_LINES; line++) {
+      const lineBase = screenStart + line * lineT;
+      for (let col = 0; col < 128; col++) {
+        const seq   = col & 7;
+        const delay = (seq === 7) ? 0 : (6 - seq);
+        table[lineBase + col] = delay;
+      }
+      // columns 128–lineT-1 remain 0 (horizontal blanking)
+    }
+    return table;
+  };
+
+  const contentionTable = buildContentionTable();
+
+  /**
+   * Return the contention delay (extra T-states) for a given frame-relative T-state.
+   *
+   * @param {number} frameT - T-states since start of frame
+   * @returns {number} Extra T-states to wait (0–6)
+   */
+  const contentionAt = (frameT) => {
+    const frameLen = is128k ? FRAME_T_128 : FRAME_T_48;
+    const t = frameT % frameLen;
+    return contentionTable[t] ?? 0;
+  };
+
+  /**
+   * Calculate total extra T-states the ULA inserts for an I/O access.
+   *
+   * Pure calculation — does not modify any state.
+   *
+   * @param {number} port     - Low 8 bits of port address
+   * @param {number} fullAddr - Full 16-bit port address
+   * @param {number} frameT   - Frame-relative T-state at time of access
+   * @returns {number} Total extra T-states to account for
+   */
+  const ioContentionForPort = (port, fullAddr, frameT) => {
+    const frameLen = is128k ? FRAME_T_128 : FRAME_T_48;
+    const isEven = (fullAddr & 0x0001) === 0;
+    // "Contended address" = bits 14-15 are 01 (i.e. 0x4000–0x7FFF)
+    const isContendedAddr = (fullAddr & 0xC000) === 0x4000;
+
+    if (isEven) {
+      // Even (ULA) port: pre-contend + 1 + post-contend + 3
+      const pre  = contentionTable[frameT % frameLen];
+      const post = contentionTable[(frameT + 1) % frameLen];
+      return pre + 1 + post + 3;
+    } else {
+      // Odd port
+      if (isContendedAddr) {
+        // 3 × (contend + 1), accumulating T-state offset each iteration
+        let total = 0;
+        for (let i = 0; i < 3; i++) {
+          total += contentionTable[(frameT + total) % frameLen] + 1;
+        }
+        return total;
+      } else {
+        return 3;
+      }
+    }
+  };
+
+  /** Running total of extra T-states accumulated by I/O contention this frame. */
+  let ioContentionExtra = 0;
+
   // ── Keyboard ──────────────────────────────────────────────────────────────
 
   /**
@@ -391,13 +520,17 @@ export const createZXS = (options = {}) => {
         tapeTBase = cpu.T();
       }
       const earBit = tapePlaying ? (tapeSignal << 6) : 0x40;
+      ioContentionExtra += ioContentionForPort(port, fullAddr, cpu.T() - frameBaseT + ioContentionExtra);
       return (0xA0 | earBit | (~keys & 0x1F));
     }
 
     // AY register read
     if ((fullAddr & 0xC002) === 0xC000) return ay.readRegister();
 
-    return 0xFF;
+    // Odd unhandled port: floating bus (ULA drives the last VRAM byte it fetched)
+    const result = floatingBusAt(cpu.T() - frameBaseT + ioContentionExtra);
+    ioContentionExtra += ioContentionForPort(port, fullAddr, cpu.T() - frameBaseT + ioContentionExtra);
+    return result;
   };
 
   /**
@@ -431,6 +564,9 @@ export const createZXS = (options = {}) => {
 
     // AY register write
     if ((fullAddr & 0xC002) === 0x8000) ay.writeRegisterValue(val);
+
+    // Accumulate I/O contention penalty for timing helpers
+    ioContentionExtra += ioContentionForPort(port, fullAddr, cpu.T() - frameBaseT + ioContentionExtra);
   };
 
   // ── CPU ───────────────────────────────────────────────────────────────────
@@ -595,6 +731,7 @@ export const createZXS = (options = {}) => {
       tapeTBase           = cpu.T();
       beeperStateAtFrameStart = beeperState;
       beeperEvents        = [];
+      ioContentionExtra   = 0;
 
       const flashPhase = (frameCount >> 4) & 1;
 
@@ -825,6 +962,9 @@ export const createZXS = (options = {}) => {
      * @param {boolean} on - True to enable tracing
      */
     trace: (on) => cpu.trace(on),
+    floatingBusAt,
+    contentionAt,
+    ioContentionForPort,
 
     /**
      * Get a snapshot of all CPU registers.
