@@ -312,6 +312,15 @@ export const createZXS = (options = {}) => {
 
   let borderColor = 7;
 
+  /**
+   * Per-frame border color event log: [t0, color0, t1, color1, ...].
+   * Records each OUT to the ULA port with frame-relative T-state.
+   * Used to look up the correct border color per scanline during rendering.
+   */
+  let borderEvents = [];
+  /** Border color at the start of the current frame (fallback for t=0). */
+  let borderColorAtFrameStart = 7;
+
   // ── Floating bus & contention ─────────────────────────────────────────────
 
   const SCREEN_START_T_48  = 14335;
@@ -543,7 +552,9 @@ export const createZXS = (options = {}) => {
   const portOut = (port, val, fullAddr) => {
     // ULA write: any even port address
     if ((fullAddr & 0x0001) === 0) {
-      borderColor = val & 0x07;
+      const newBorder = val & 0x07;
+      borderEvents.push(cpu.T() - frameBaseT, newBorder);
+      borderColor = newBorder;
       const newBeeper = (val >> 4) & 1;
       if (newBeeper !== beeperState) {
         beeperEvents.push(cpu.T() - frameBaseT, newBeeper);
@@ -704,6 +715,7 @@ export const createZXS = (options = {}) => {
       ram128.fill(0);
       romBank = 0; ramBank = 0; screenBank = 5; pagingDisabled = false;
       borderColor = 7; frameCount = 0; interruptCounter = interruptPeriod;
+      borderColorAtFrameStart = 7; borderEvents = [];
       currentKeyMatrix = new Uint8Array(8);
       beeperState = 0; beeperStateAtFrameStart = 0; beeperEvents = []; frameBaseT = 0;
       tapeEdges = new Uint32Array(0); tapePos = 0; tapeT = 0; tapeSignal = 0; tapePlaying = false; tapeTBase = 0;
@@ -731,6 +743,8 @@ export const createZXS = (options = {}) => {
       tapeTBase           = cpu.T();
       beeperStateAtFrameStart = beeperState;
       beeperEvents        = [];
+      borderColorAtFrameStart = borderColor;
+      borderEvents            = [];
       ioContentionExtra   = 0;
 
       const flashPhase = (frameCount >> 4) & 1;
@@ -754,11 +768,27 @@ export const createZXS = (options = {}) => {
        * Called after each cpu.steps() slice; tRendered must be updated by the caller after this call.
        * @param {number} chunk - T-states executed in this execution slice
        */
+      /**
+       * Look up the border color that was active at a given frame-relative T-state.
+       * Uses borderEvents log; falls back to borderColorAtFrameStart for T=0.
+       *
+       * @param {number} t - Frame-relative T-state
+       * @returns {number} Border color index (0–7)
+       */
+      const getBorderColorAtT = (t) => {
+        let color = borderColorAtFrameStart;
+        for (let i = 0; i < borderEvents.length; i += 2) {
+          if (borderEvents[i] <= t) color = borderEvents[i + 1];
+          else break;
+        }
+        return color;
+      };
+
       const renderChunk = (chunk) => {
         for (let line = 0; line < VISIBLE_LINES; line++) {
           const lineT = Math.round(tStates * line / SCANLINES);
           if (lineT >= tRendered && lineT < tRendered + chunk) {
-            renderScanline(line, borderColor, flashPhase);
+            renderScanline(line, getBorderColorAtT(lineT), flashPhase);
           }
         }
       };
