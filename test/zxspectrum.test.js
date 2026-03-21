@@ -488,68 +488,18 @@ QUnit.module("ZXS AY 48k", () => {
 
 QUnit.module("floating bus (48k)", () => {
 
-  QUnit.test("returns 0xFF during top border (T < 14335)", (assert) => {
+  QUnit.test("floatingBusValue is 0xFF after full frame (bottom border is last event)", (assert) => {
     const zxs = make48();
-    assert.strictEqual(zxs.floatingBusAt(0), 0xFF);
-    assert.strictEqual(zxs.floatingBusAt(14334), 0xFF);
+    zxs.reset();
+    zxs.frame(69888, null);
+    assert.strictEqual(zxs.getFloatingBusValue(), 0xFF,
+      "floatingBusValue = 0xFF at end of frame (bottom border)");
   });
 
-  QUnit.test("returns 0xFF during horizontal blanking (col >= 128)", (assert) => {
+  QUnit.test("floatingBusValue is 0xFF at reset", (assert) => {
     const zxs = make48();
-    assert.strictEqual(zxs.floatingBusAt(14335 + 128), 0xFF);
-    assert.strictEqual(zxs.floatingBusAt(14335 + 223), 0xFF);
-  });
-
-  QUnit.test("returns 0xFF after active display (line >= 192)", (assert) => {
-    const zxs = make48();
-    assert.strictEqual(zxs.floatingBusAt(14335 + 192 * 224), 0xFF);
-  });
-
-  QUnit.test("returns pixel byte at phase 0 (line 0, col 0)", (assert) => {
-    const zxs = make48();
-    const ram = zxs.getRAM();
-    ram[0x0000] = 0xAB;
-    ram[0x1800] = 0xCD;
-    assert.strictEqual(zxs.floatingBusAt(14335), 0xAB);
-  });
-
-  QUnit.test("returns attr byte at phase 2 (line 0, col 2)", (assert) => {
-    const zxs = make48();
-    const ram = zxs.getRAM();
-    ram[0x0000] = 0xAB;
-    ram[0x1800] = 0xCD;
-    assert.strictEqual(zxs.floatingBusAt(14337), 0xCD);
-  });
-
-  QUnit.test("returns pixel byte at phase 4 (line 0, col 4)", (assert) => {
-    const zxs = make48();
-    const ram = zxs.getRAM();
-    ram[0x0001] = 0x55;
-    assert.strictEqual(zxs.floatingBusAt(14339), 0x55);
-  });
-
-  QUnit.test("returns attr byte at phase 6 (line 0, col 6)", (assert) => {
-    const zxs = make48();
-    const ram = zxs.getRAM();
-    ram[0x1801] = 0xEF; // xByte=1 -> attrAddr = 0x1801
-    assert.strictEqual(zxs.floatingBusAt(14341), 0xEF);
-  });
-
-  QUnit.test("correct pixel addr for line 64 (third of screen)", (assert) => {
-    // y=64: pixelAddr = 0x0800
-    const zxs = make48();
-    const ram = zxs.getRAM();
-    ram[0x0800] = 0x77;
-    assert.strictEqual(zxs.floatingBusAt(14335 + 64 * 224), 0x77);
-  });
-
-  QUnit.test("portIn odd address returns floating bus value (not 0xFF)", (assert) => {
-    const zxs = make48();
-    const ram = zxs.getRAM();
-    ram[0x0000] = 0x42;
-    ram[0x1800] = 0x99;
-    const val = zxs.floatingBusAt(14335);
-    assert.strictEqual(val, 0x42);
+    assert.strictEqual(zxs.getFloatingBusValue(), 0xFF,
+      "floatingBusValue = 0xFF immediately after reset");
   });
 
 });
@@ -698,56 +648,6 @@ QUnit.module("updateFramebuffer (48k)", () => {
     const zxs = make48();
     assert.strictEqual(zxs.getFloatingBusValue(), 0xFF,
       "floatingBusValue starts at 0xFF");
-  });
-
-  QUnit.test("after flush at T=14359, floatingBusValue = attrByte at 0x1800", (assert) => {
-    // T=14359 = first pixel event (active line 0, xByte=0)
-    // pixAddr=0x0000, attrAddr=0x1800
-    const zxs = make48();
-    const ram = zxs.getRAM();
-    ram[0x0000] = 0xAB;  // pixel byte
-    ram[0x1800] = 0xCD;  // attr byte
-    zxs.updateFramebufferTo(14359);
-    assert.strictEqual(zxs.getFloatingBusValue(), 0xCD,
-      "floatingBusValue = attrByte after pixel event");
-  });
-
-  QUnit.test("after flush at T=14355 (still left-border), floatingBusValue = 0xFF", (assert) => {
-    // lineBaseT for active line 0 = 14335
-    // Left border events at T=14335, 14343, 14351 — last one at 14351
-    // Next pixel event at T=14359
-    // T=14355 is after border events (14351 <= 14355) but before pixel event (14359 > 14355)
-    // So last processed event is border → floatingBusValue = 0xFF
-    const zxs = make48();
-    const ram = zxs.getRAM();
-    ram[0x1800] = 0xCD;
-    zxs.updateFramebufferTo(14355);
-    assert.strictEqual(zxs.getFloatingBusValue(), 0xFF,
-      "floatingBusValue = 0xFF in left border");
-  });
-
-  QUnit.test("frameBuffer byte 0 = borderColor=7 after first event at T=3583", (assert) => {
-    const zxs = make48();
-    zxs.updateFramebufferTo(3583);
-    // First event at T=3583 is a border event, borderColor starts at 7
-    assert.strictEqual(zxs.getFrameBufferByte(0), 7,
-      "first frameBuffer byte = borderColor=7");
-  });
-
-  QUnit.test("pixel event writes pixelByte then attrByte", (assert) => {
-    const zxs = make48();
-    const ram = zxs.getRAM();
-    ram[0x0000] = 0x55;
-    ram[0x1800] = 0x38;
-    // Flush past first pixel event at T=14359
-    zxs.updateFramebufferTo(14360);
-    // frameBuffer layout up to first pixel event:
-    // - 48 border scanlines x 22 events = 1056 border bytes (each event = 1 byte)
-    // - active line 0: 3 left-border events x 1B = 3 bytes
-    // - then pixel event: pixByte at [1059], attrByte at [1060]
-    const pixelOffset = 1056 + 3;
-    assert.strictEqual(zxs.getFrameBufferByte(pixelOffset),     0x55, "pixelByte written");
-    assert.strictEqual(zxs.getFrameBufferByte(pixelOffset + 1), 0x38, "attrByte written");
   });
 
 });

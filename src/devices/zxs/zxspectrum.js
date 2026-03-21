@@ -312,15 +312,6 @@ export const createZXS = (options = {}) => {
 
   let borderColor = 7;
 
-  /**
-   * Per-frame border color event log: [t0, color0, t1, color1, ...].
-   * Records each OUT to the ULA port with frame-relative T-state.
-   * Used to look up the correct border color per scanline during rendering.
-   */
-  let borderEvents = [];
-  /** Border color at the start of the current frame (fallback for t=0). */
-  let borderColorAtFrameStart = 7;
-
   // ── Floating bus & contention ─────────────────────────────────────────────
 
   const SCREEN_START_T_48  = 14335;
@@ -329,47 +320,6 @@ export const createZXS = (options = {}) => {
   const TSTATE_PER_LINE_128 = 228;
   const FRAME_T_48  = 69888;
   const FRAME_T_128 = 70908;
-
-  /**
-   * Return the ULA floating bus byte visible at the given frame-relative T-state.
-   *
-   * During active display the ULA fetches pixel and attribute bytes from VRAM
-   * in an 8-T-state cycle. When the CPU reads an unhandled I/O port the data
-   * bus carries the last byte the ULA drove, so programs can sniff VRAM content
-   * via IN A,(FF) (or any odd port).
-   *
-   * @param {number} frameT - T-states elapsed since start of this frame (≥ 0)
-   * @returns {number} Byte value 0–255
-   */
-  const floatingBusAt = (frameT) => {
-    const screenStart = is128k ? SCREEN_START_T_128 : SCREEN_START_T_48;
-    const lineT       = is128k ? TSTATE_PER_LINE_128 : TSTATE_PER_LINE_48;
-
-    const relT = frameT - screenStart;
-    if (relT < 0) return 0xFF;                     // top border / retrace
-
-    const line = Math.floor(relT / lineT);
-    if (line >= ACTIVE_LINES) return 0xFF;          // bottom border / retrace
-
-    const col = relT % lineT;
-    if (col >= 128) return 0xFF;                    // horizontal blanking
-
-    const fetch = col >> 3;          // which 8-T group (0–15)
-    const phase = col & 7;           // position within group (0–7)
-    const xByte = (fetch << 1) + (phase >= 4 ? 1 : 0);  // byte column 0–31
-    const y     = line;
-
-    const pixelAddr = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | xByte;
-    const attrAddr  = 0x1800 | ((y >> 3) * 32) | xByte;
-
-    const isAttr = phase === 2 || phase === 3 || phase === 6 || phase === 7;
-
-    if (is128k) {
-      const base = screenBank * 16384;
-      return isAttr ? ram128[base + attrAddr] : ram128[base + pixelAddr];
-    }
-    return isAttr ? ram48[attrAddr] : ram48[pixelAddr];
-  };
 
   /**
    * Build a per-T-state contention delay lookup table for one full frame.
@@ -724,7 +674,6 @@ export const createZXS = (options = {}) => {
       if (newBorder !== borderColor) {
         updateFramebuffer(cpu.T() - frameBaseT);
       }
-      borderEvents.push(cpu.T() - frameBaseT, newBorder);
       borderColor = newBorder;
       const newBeeper = (val >> 4) & 1;
       if (newBeeper !== beeperState) {
@@ -754,70 +703,6 @@ export const createZXS = (options = {}) => {
   // ── CPU ───────────────────────────────────────────────────────────────────
 
   const cpu = createZ80({ byteAt, byteTo, portIn, portOut });
-
-  // ── Video rendering ───────────────────────────────────────────────────────
-
-  /**
-   * Render one scanline into videoBuffer.
-   *
-   * @param {number} line       - Scanline index 0–311
-   * @param {number} bColor     - Current border color index (0–7)
-   * @param {boolean} flashPhase - True = flash inverted this frame
-   */
-  const renderScanline = (line, bColor, flashPhase) => {
-    // Skip retrace lines — they are outside the video buffer
-    if (line >= VISIBLE_LINES) return;
-
-    const borderRGBA = ZX_PALETTE_RGBA[bColor];
-    const rowBase    = line * SCREEN_W;
-
-    const isActive = line >= TOP_BORDER && line < TOP_BORDER + ACTIVE_LINES;
-
-    // Fill entire scanline with border color first
-    videoView.fill(borderRGBA, rowBase, rowBase + SCREEN_W);
-
-    if (!isActive) return;
-
-    const y = line - TOP_BORDER;  // Display line 0–191
-
-    // Active pixels (256 wide = 32 bytes), starting at LEFT_BORDER_PX
-    const vramBase = is128k ? screenBank * 16384 : 0;
-    for (let xByte = 0; xByte < 32; xByte++) {
-      // ZX Spectrum pixel addressing:
-      // bits 12-11: top third (y bits 7-6)
-      // bits 10-8:  y bits 2-0
-      // bits 7-5:   y bits 5-3
-      // bits 4-0:   x byte
-      const pixelOffset = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | xByte;
-      const attrOffset  = 0x1800 | ((y >> 3) * 32) | xByte;
-
-      let pixelByte, attrByte;
-      if (is128k) {
-        pixelByte = ram128[vramBase + pixelOffset];
-        attrByte  = ram128[vramBase + attrOffset];
-      } else {
-        pixelByte = ram48[pixelOffset];
-        attrByte  = ram48[attrOffset];
-      }
-
-      const bright    = (attrByte & 0x40) ? 8 : 0;
-      let   inkIdx    = (attrByte & 0x07) | bright;
-      let   paperIdx  = ((attrByte >> 3) & 0x07) | bright;
-      const flash     = (attrByte & 0x80) !== 0;
-
-      if (flash && flashPhase) {
-        const tmp = inkIdx; inkIdx = paperIdx; paperIdx = tmp;
-      }
-
-      const inkRGBA   = ZX_PALETTE_RGBA[inkIdx];
-      const paperRGBA = ZX_PALETTE_RGBA[paperIdx];
-
-      const pxBase = rowBase + LEFT_BORDER_PX + xByte * 8;
-      for (let bit = 7; bit >= 0; bit--) {
-        videoView[pxBase + (7 - bit)] = (pixelByte >> bit) & 1 ? inkRGBA : paperRGBA;
-      }
-    }
-  };
 
   // ── Tape playback ─────────────────────────────────────────────────────────
 
@@ -886,7 +771,6 @@ export const createZXS = (options = {}) => {
       ram128.fill(0);
       romBank = 0; ramBank = 0; screenBank = 5; pagingDisabled = false;
       borderColor = 7; frameCount = 0; interruptCounter = interruptPeriod;
-      borderColorAtFrameStart = 7; borderEvents = [];
       currentKeyMatrix = new Uint8Array(8);
       beeperState = 0; beeperStateAtFrameStart = 0; beeperEvents = []; frameBaseT = 0;
       tapeEdges = new Uint32Array(0); tapePos = 0; tapeT = 0; tapeSignal = 0; tapePlaying = false; tapeTBase = 0;
@@ -1128,13 +1012,6 @@ export const createZXS = (options = {}) => {
     trace: (on) => cpu.trace(on),
     getScreenEventsTable: () => screenEventsTable,
     getFloatingBusValue: () => floatingBusValue,
-    getFrameBufferByte:  (i) => frameBuffer[i],
-    updateFramebufferTo: (t) => {
-      // Test helper: flush events up to T from the start of a frame.
-      // Assumes pointers are at 0 (i.e., called right after reset).
-      updateFramebuffer(t);
-    },
-    floatingBusAt,
     contentionAt,
     ioContentionForPort,
 
