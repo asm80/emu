@@ -263,6 +263,61 @@ export const createTEC = (options = {}) => {
     frame,
     getDisplay,
     getCPU,
-    nmi
+    nmi,
+
+    /** Execute one Z80 instruction (for debugger stepping). */
+    cpuSingleStep() {
+      if (cpu) cpu.singleStep();
+    },
+
+    /** Return the full 64 KB RAM buffer (ROM reads handled by byteAt). */
+    getRAM() {
+      return ram;
+    },
+
+    /**
+     * Return normalized CPU status for the debugger.
+     * Shape matches what buildDebuggerStateZ80 expects.
+     */
+    getCpuStatus() {
+      if (!cpu) return null;
+      const s = cpu.status();
+      return {
+        pc:    s.pc  & 0xFFFF,
+        sp:    s.sp  & 0xFFFF,
+        a:     s.a   & 0xFF,
+        f:     s.f   & 0xFF,
+        b:     s.b   & 0xFF,
+        c:     s.c   & 0xFF,
+        d:     s.d   & 0xFF,
+        e:     s.e   & 0xFF,
+        h:     s.h   & 0xFF,
+        l:     s.l   & 0xFF,
+        af:    s.af  & 0xFFFF,
+        bc:    s.bc  & 0xFFFF,
+        de:    s.de  & 0xFFFF,
+        hl:    s.hl  & 0xFFFF,
+        "af_": s.af_ & 0xFFFF,
+        "bc_": s.bc_ & 0xFFFF,
+        "de_": s.de_ & 0xFFFF,
+        "hl_": s.hl_ & 0xFFFF,
+        ix:    s.ix  & 0xFFFF,
+        iy:    s.iy  & 0xFFFF,
+        i:     s.i   & 0xFF,
+        r:     s.r   & 0xFF,
+      };
+    },
+
+    /**
+     * Set a CPU register by name.
+     * Delegates to cpu.set() which handles both pairs and individual bytes.
+     * Shadow registers: pass e.g. "AF_" (underscore suffix).
+     *
+     * @param {string} reg  Register name (e.g. "PC", "AF", "AF_", "A", "F")
+     * @param {number} val  Value to set
+     */
+    setCpuRegister(reg, val) {
+      if (cpu) cpu.set(reg, val);
+    },
   };
 };
