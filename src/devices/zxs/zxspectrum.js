@@ -536,6 +536,10 @@ export const createZXS = (options = {}) => {
     // AY register read
     if ((fullAddr & 0xC002) === 0xC000) return ay.readRegister();
 
+    // Kempston joystick: low byte bits 5-7 all zero (e.g. 0x1F, 0x3F).
+    // Return 0 = no joystick connected (active-high, so 0 = no input).
+    if (!(port & 0xE0)) return 0;
+
     // Odd unhandled port: floating bus (ULA drives the last VRAM byte it fetched)
     const result = floatingBusAt(cpu.T() - frameBaseT + ioContentionExtra);
     ioContentionExtra += ioContentionForPort(port, fullAddr, cpu.T() - frameBaseT + ioContentionExtra);
@@ -784,9 +788,20 @@ export const createZXS = (options = {}) => {
         return color;
       };
 
+      // Precompute per-scanline T-state mapping.
+      // Visible line 0 = first top-border line, at T = SCREEN_START_T - TOP_BORDER*scanlineT.
+      // For 48k: 14335 - 48*224 = 3583. For 128k: 14361 - 48*228 = 3417.
+      const scanlineT     = is128k ? TSTATE_PER_LINE_128 : TSTATE_PER_LINE_48;
+      const visibleStartT = (is128k ? SCREEN_START_T_128 : SCREEN_START_T_48) - TOP_BORDER * scanlineT;
+
+      /**
+       * Render visible scanlines whose T-state position falls within [tRendered, tRendered + chunk).
+       * Uses historically correct border color per scanline from borderEvents log.
+       * @param {number} chunk - T-states executed in this execution slice
+       */
       const renderChunk = (chunk) => {
         for (let line = 0; line < VISIBLE_LINES; line++) {
-          const lineT = Math.round(tStates * line / SCANLINES);
+          const lineT = visibleStartT + line * scanlineT;
           if (lineT >= tRendered && lineT < tRendered + chunk) {
             renderScanline(line, getBorderColorAtT(lineT), flashPhase);
           }
