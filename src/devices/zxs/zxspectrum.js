@@ -602,7 +602,7 @@ export const createZXS = (options = {}) => {
     if (addr < 0x4000) return;  // ROM is read-only
     // Flush ULA events up to current T BEFORE the write takes effect.
     // Events already flushed will read old VRAM; events flushed after will read new.
-    if (addr >= 0x4000 && addr < 0x5B00) {
+    if (addr < 0x5B00) {
       updateFramebuffer(cpu.T() - frameBaseT);
     }
     if (is128k) {
@@ -1010,7 +1010,10 @@ export const createZXS = (options = {}) => {
      * @param {boolean} on - True to enable tracing
      */
     trace: (on) => cpu.trace(on),
+    /** @returns {Uint32Array} Pre-computed ULA video event table for current frame. */
     getScreenEventsTable: () => screenEventsTable,
+
+    /** @returns {number} Last byte the ULA fetched from VRAM (0xFF during border/blanking). */
     getFloatingBusValue: () => floatingBusValue,
     contentionAt,
     ioContentionForPort,
