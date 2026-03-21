@@ -450,6 +450,79 @@ export const createZXS = (options = {}) => {
   /** Running total of extra T-states accumulated by I/O contention this frame. */
   let ioContentionExtra = 0;
 
+  // ── Deferred frameBuffer (JSSpeccy3-style ULA log) ────────────────────────
+
+  /** Pre-computed ULA video events for one full frame. Built at reset(). */
+  let screenEventsTable = new Uint32Array(0);
+
+  /** Raw ULA output log: border color bytes and pixel+attr byte pairs. */
+  const frameBuffer = new Uint8Array(16880);
+
+  /** Next unprocessed index in screenEventsTable. Reset each frame. */
+  let screenEventPtr = 0;
+
+  /** Next write index in frameBuffer. Reset each frame. */
+  let frameBufferPtr = 0;
+
+  /** Last byte the ULA fetched from VRAM. 0xFF during border/blanking. */
+  let floatingBusValue = 0xFF;
+
+  /**
+   * Build the pre-computed ULA video event table for one full frame.
+   * Each event = 2 x u32: [frameRelativeT, data].
+   * data = 0xFFFFFFFF for border events, or lo16=pixAddr | hi16=attrAddr for pixel events.
+   * Called in reset() and after 128k screen bank changes.
+   *
+   * @returns {Uint32Array} Event table (9584 events x 2 + 2 terminator)
+   */
+  const buildScreenEventsTable = () => {
+    const scanlineT   = is128k ? TSTATE_PER_LINE_128 : TSTATE_PER_LINE_48;
+    const screenStart = is128k ? SCREEN_START_T_128  : SCREEN_START_T_48;
+    const visStartT   = screenStart - TOP_BORDER * scanlineT;
+    const table = new Uint32Array(9584 * 2 + 2);
+    let ptr = 0;
+
+    for (let line = 0; line < VISIBLE_LINES; line++) {
+      const lineBaseT = visStartT + line * scanlineT;
+      const isActive  = line >= TOP_BORDER && line < TOP_BORDER + ACTIVE_LINES;
+      const y         = line - TOP_BORDER;  // 0-191 for active lines
+
+      // Left border: 3 x 8T groups at T=0, 8, 16
+      for (let g = 0; g < 3; g++) {
+        table[ptr++] = lineBaseT + g * 8;
+        table[ptr++] = 0xFFFFFFFF;
+      }
+
+      if (isActive) {
+        // Active display: 32 x 4T fetches starting at T=24
+        for (let xByte = 0; xByte < 32; xByte++) {
+          const pixAddr  = ((y & 0xC0) << 5) | ((y & 0x07) << 8) |
+                           ((y & 0x38) << 2) | xByte;
+          const attrAddr = 0x1800 | ((y >> 3) * 32) | xByte;
+          table[ptr++] = lineBaseT + 24 + xByte * 4;
+          table[ptr++] = pixAddr | (attrAddr << 16);
+        }
+      } else {
+        // Border across active-display width: 16 x 8T groups
+        for (let g = 0; g < 16; g++) {
+          table[ptr++] = lineBaseT + 24 + g * 8;
+          table[ptr++] = 0xFFFFFFFF;
+        }
+      }
+
+      // Right border: 3 x 8T groups at T=152, 160, 168
+      for (let g = 0; g < 3; g++) {
+        table[ptr++] = lineBaseT + 152 + g * 8;
+        table[ptr++] = 0xFFFFFFFF;
+      }
+    }
+
+    // Terminator
+    table[ptr++] = 0xFFFFFFFF;
+    table[ptr++] = 0xFFFFFFFF;
+    return table;
+  };
+
   // ── Keyboard ──────────────────────────────────────────────────────────────
 
   /**
@@ -727,6 +800,7 @@ export const createZXS = (options = {}) => {
       videoBuffer.fill(0);
       ay.reset();
       cpu.reset();
+      screenEventsTable = buildScreenEventsTable();
       initialized = true;
     },
 
@@ -1007,6 +1081,7 @@ export const createZXS = (options = {}) => {
      * @param {boolean} on - True to enable tracing
      */
     trace: (on) => cpu.trace(on),
+    getScreenEventsTable: () => screenEventsTable,
     floatingBusAt,
     contentionAt,
     ioContentionForPort,

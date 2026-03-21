@@ -622,3 +622,70 @@ QUnit.module("I/O contention accounting (48k)", () => {
   });
 
 });
+
+// ── screenEventsTable ─────────────────────────────────────────────────────────
+
+QUnit.module("screenEventsTable (48k)", () => {
+
+  QUnit.test("first event T-state = visStartT = 3583", (assert) => {
+    const zxs = make48();
+    const tbl = zxs.getScreenEventsTable();
+    assert.strictEqual(tbl[0], 3583, "first event at T=3583");
+  });
+
+  QUnit.test("first event is a border event (data = 0xFFFFFFFF)", (assert) => {
+    const zxs = make48();
+    const tbl = zxs.getScreenEventsTable();
+    assert.strictEqual(tbl[1], 0xFFFFFFFF, "first event is border");
+  });
+
+  QUnit.test("first pixel event T-state = 14359", (assert) => {
+    // Active line 0 = visible line 48, lineBaseT = 3583 + 48*224 = 14335
+    // First pixel event at lineBaseT + 24 = 14359
+    const zxs = make48();
+    const tbl = zxs.getScreenEventsTable();
+    // Skip 48 border scanlines x 22 events = 1056 events = 2112 u32 slots
+    // First 3 events of active line are left-border
+    // 4th event is the first pixel event
+    const firstPixelIdx = 1056 * 2 + 3 * 2;
+    assert.strictEqual(tbl[firstPixelIdx], 14359, "first pixel event T=14359");
+  });
+
+  QUnit.test("first pixel event has data != 0xFFFFFFFF", (assert) => {
+    const zxs = make48();
+    const tbl = zxs.getScreenEventsTable();
+    const firstPixelIdx = 1056 * 2 + 3 * 2;
+    assert.notStrictEqual(tbl[firstPixelIdx + 1], 0xFFFFFFFF, "pixel event has address data");
+  });
+
+  QUnit.test("active line 0, xByte=0: pixAddr=0x0000, attrAddr=0x1800", (assert) => {
+    const zxs = make48();
+    const tbl = zxs.getScreenEventsTable();
+    const firstPixelDataIdx = 1056 * 2 + 3 * 2 + 1;
+    const data = tbl[firstPixelDataIdx];
+    const pixAddr  = data & 0xFFFF;
+    const attrAddr = data >> 16;
+    assert.strictEqual(pixAddr,  0x0000, "pixAddr=0x0000 for y=0, xByte=0");
+    assert.strictEqual(attrAddr, 0x1800, "attrAddr=0x1800 for y=0, xByte=0");
+  });
+
+  QUnit.test("active line 8, xByte=0: pixAddr=0x0020", (assert) => {
+    // y=8: pixAddr = ((8&0xC0)<<5)|((8&0x07)<<8)|((8&0x38)<<2)|0 = 0|0|(8<<2)|0 = 32 = 0x0020
+    const zxs = make48();
+    const tbl = zxs.getScreenEventsTable();
+    // Events before active line 8: 48 border scanlines (22 each) + 8 active scanlines (38 each) = 1056+304 = 1360 events
+    const lineEventStart = 1360 * 2;
+    const firstPixelDataIdx = lineEventStart + 3 * 2 + 1;
+    const data = tbl[firstPixelDataIdx];
+    const pixAddr = data & 0xFFFF;
+    assert.strictEqual(pixAddr, 0x0020, "pixAddr=0x0020 for y=8, xByte=0");
+  });
+
+  QUnit.test("table terminates with 0xFFFFFFFF sentinel", (assert) => {
+    const zxs = make48();
+    const tbl = zxs.getScreenEventsTable();
+    assert.strictEqual(tbl[9584 * 2],     0xFFFFFFFF, "terminator T-state");
+    assert.strictEqual(tbl[9584 * 2 + 1], 0xFFFFFFFF, "terminator data");
+  });
+
+});
