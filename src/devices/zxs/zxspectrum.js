@@ -555,6 +555,60 @@ export const createZXS = (options = {}) => {
     }
   };
 
+  /**
+   * Decode the raw frameBuffer into the RGBA videoView.
+   *
+   * Called once per frame after updateFramebuffer(frameLen) has flushed all events.
+   * Walks screenEventsTable and frameBuffer in parallel; each event determines
+   * whether to write 16 border pixels or decode 8 ink/paper pixels.
+   *
+   * @param {number} flashPhase - 0 or 1; when 1, flash attributes swap ink/paper
+   */
+  const decodeFrameBuffer = (flashPhase) => {
+    let fbPtr  = 0;
+    let evPtr  = 0;
+    let line   = 0;
+    let xPixel = 0;
+
+    while (true) {
+      const evT = screenEventsTable[evPtr];
+      if (evT === 0xFFFFFFFF) break;
+      const data = screenEventsTable[evPtr + 1];
+      evPtr += 2;
+
+      const rowBase = line * SCREEN_W;
+
+      if (data === 0xFFFFFFFF) {
+        // Border event: 16 pixels of the same border color
+        const rgba = ZX_PALETTE_RGBA[frameBuffer[fbPtr++]];
+        for (let i = 0; i < 16; i++) videoView[rowBase + xPixel + i] = rgba;
+        xPixel += 16;
+      } else {
+        // Pixel event: 8 pixels decoded from pixel byte + attribute byte
+        const pixByte  = frameBuffer[fbPtr++];
+        const attrByte = frameBuffer[fbPtr++];
+        const bright   = (attrByte & 0x40) ? 8 : 0;
+        let   inkIdx   = (attrByte & 0x07) | bright;
+        let   paperIdx = ((attrByte >> 3) & 0x07) | bright;
+        if ((attrByte & 0x80) && flashPhase) {
+          const tmp = inkIdx; inkIdx = paperIdx; paperIdx = tmp;
+        }
+        const ink   = ZX_PALETTE_RGBA[inkIdx];
+        const paper = ZX_PALETTE_RGBA[paperIdx];
+        for (let bit = 7; bit >= 0; bit--) {
+          videoView[rowBase + xPixel + (7 - bit)] =
+            (pixByte >> bit) & 1 ? ink : paper;
+        }
+        xPixel += 8;
+      }
+
+      if (xPixel >= SCREEN_W) {
+        xPixel = 0;
+        line++;
+      }
+    }
+  };
+
   // ── Keyboard ──────────────────────────────────────────────────────────────
 
   /**
@@ -853,87 +907,38 @@ export const createZXS = (options = {}) => {
       tapeTBase           = cpu.T();
       beeperStateAtFrameStart = beeperState;
       beeperEvents        = [];
-      borderColorAtFrameStart = borderColor;
-      borderEvents            = [];
       ioContentionExtra   = 0;
 
       const flashPhase = (frameCount >> 4) & 1;
 
-      // Execute tStates T-states, injecting the ULA 50 Hz interrupt at the correct
-      // T-state position. interruptCounter persists across frame() calls so the
-      // interrupt fires at exactly 69888 (48k) or 70908 (128k) T-state intervals
-      // regardless of how large each frame slice is.
-      //
-      // The interrupt is fired BEFORE the cpu.steps() call that will process it,
-      // so that a HALTed CPU wakes up to handle it. interruptCounter counts
-      // T-states remaining until the next interrupt fires.
-      //
-      // Scanlines are rendered proportionally to preserve mid-frame border color
-      // changes. tRendered tracks frame-relative T-states executed so far.
+      // Reset deferred frameBuffer pointers for this frame
+      screenEventPtr   = 0;
+      frameBufferPtr   = 0;
+      floatingBusValue = 0xFF;
+
+      const frameLen = is128k ? FRAME_T_128 : FRAME_T_48;
       let remaining = tStates;
-      let tRendered = 0;
 
-      /**
-       * Render visible scanlines whose T-state position falls within [tRendered, tRendered + chunk).
-       * Called after each cpu.steps() slice; tRendered must be updated by the caller after this call.
-       * @param {number} chunk - T-states executed in this execution slice
-       */
-      /**
-       * Look up the border color that was active at a given frame-relative T-state.
-       * Uses borderEvents log; falls back to borderColorAtFrameStart for T=0.
-       *
-       * @param {number} t - Frame-relative T-state
-       * @returns {number} Border color index (0–7)
-       */
-      const getBorderColorAtT = (t) => {
-        let color = borderColorAtFrameStart;
-        for (let i = 0; i < borderEvents.length; i += 2) {
-          if (borderEvents[i] <= t) color = borderEvents[i + 1];
-          else break;
-        }
-        return color;
-      };
-
-      // Precompute per-scanline T-state mapping.
-      // Visible line 0 = first top-border line, at T = SCREEN_START_T - TOP_BORDER*scanlineT.
-      // For 48k: 14335 - 48*224 = 3583. For 128k: 14361 - 48*228 = 3417.
-      const scanlineT     = is128k ? TSTATE_PER_LINE_128 : TSTATE_PER_LINE_48;
-      const visibleStartT = (is128k ? SCREEN_START_T_128 : SCREEN_START_T_48) - TOP_BORDER * scanlineT;
-
-      /**
-       * Render visible scanlines whose T-state position falls within [tRendered, tRendered + chunk).
-       * Uses historically correct border color per scanline from borderEvents log.
-       * @param {number} chunk - T-states executed in this execution slice
-       */
-      const renderChunk = (chunk) => {
-        for (let line = 0; line < VISIBLE_LINES; line++) {
-          const lineT = visibleStartT + line * scanlineT;
-          if (lineT >= tRendered && lineT < tRendered + chunk) {
-            renderScanline(line, getBorderColorAtT(lineT), flashPhase);
-          }
-        }
-      };
-
+      // Execute T-states. updateFramebuffer() is called reactively via hooks
+      // in byteTo (VRAM write) and portOut (border color change).
       while (remaining > 0) {
         if (interruptCounter <= remaining) {
           const tBefore = cpu.T();
           cpu.steps(interruptCounter);
-          const actual = cpu.T() - tBefore;
-          renderChunk(actual);
-          tRendered += actual;
+          remaining -= cpu.T() - tBefore;
           cpu.interrupt(0xFF);
-          remaining -= actual;
           interruptCounter = interruptPeriod;
         } else {
           const tBefore = cpu.T();
           cpu.steps(remaining);
-          const actual = cpu.T() - tBefore;
-          renderChunk(actual);
-          tRendered += actual;
-          interruptCounter -= actual;
+          interruptCounter -= cpu.T() - tBefore;
           remaining = 0;
         }
       }
+
+      // Flush any events not triggered reactively, decode to RGBA
+      updateFramebuffer(frameLen);
+      decodeFrameBuffer(flashPhase);
 
       // Flush any remaining tape T-states not consumed by IN instructions
       // (e.g. frames where the loader isn't actively sampling).

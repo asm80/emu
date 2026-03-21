@@ -751,3 +751,73 @@ QUnit.module("updateFramebuffer (48k)", () => {
   });
 
 });
+
+// ── decodeFrameBuffer ─────────────────────────────────────────────────────────
+
+QUnit.module("decodeFrameBuffer (48k)", () => {
+
+  const runFrameAndGetPixel = (zxs, x, y) => {
+    zxs.frame(69888, null);
+    const buf = zxs.getVideoBuffer();
+    const offset = (y * 352 + x) * 4;
+    return { r: buf[offset], g: buf[offset + 1], b: buf[offset + 2] };
+  };
+
+  QUnit.test("default border=7 fills top-border line 0 with white (215,215,215)", (assert) => {
+    const zxs = make48();
+    zxs.reset();
+    const { r, g, b } = runFrameAndGetPixel(zxs, 0, 0);
+    assert.strictEqual(r, 215, "border R=215");
+    assert.strictEqual(g, 215, "border G=215");
+    assert.strictEqual(b, 215, "border B=215");
+  });
+
+  QUnit.test("all-zero VRAM: first active pixel is black (0,0,0)", (assert) => {
+    const zxs = make48();
+    zxs.reset();
+    // VRAM zeroed: attr=0 (paper=0 black, ink=0 black), pixel=0 (all paper)
+    const { r, g, b } = runFrameAndGetPixel(zxs, 48, 48);  // first active pixel
+    assert.strictEqual(r, 0, "active pixel R=0");
+    assert.strictEqual(g, 0, "active pixel G=0");
+    assert.strictEqual(b, 0, "active pixel B=0");
+  });
+
+  QUnit.test("pixel=0xFF attr=0x07: first active pixel is white ink", (assert) => {
+    const zxs = make48();
+    zxs.reset();
+    const ram = zxs.getRAM();
+    ram[0x0000] = 0xFF;  // all ink bits
+    ram[0x1800] = 0x07;  // ink=7(white), paper=0(black)
+    const { r, g, b } = runFrameAndGetPixel(zxs, 48, 48);
+    assert.strictEqual(r, 215, "ink white R=215");
+    assert.strictEqual(g, 215, "ink white G=215");
+    assert.strictEqual(b, 215, "ink white B=215");
+  });
+
+  QUnit.test("flash attr=0x87 flashPhase=0: ink pixel is white (no swap)", (assert) => {
+    const zxs = make48();
+    zxs.reset();
+    const ram = zxs.getRAM();
+    ram[0x0000] = 0xFF;
+    ram[0x1800] = 0x87;  // flash=1, ink=7(white), paper=0(black)
+    // Frame 0: flashPhase = (0>>4)&1 = 0
+    const { r, g, b } = runFrameAndGetPixel(zxs, 48, 48);
+    assert.strictEqual(r, 215, "flashPhase=0: ink stays white R=215");
+  });
+
+  QUnit.test("flash attr=0x87 flashPhase=1: ink pixel is black (swapped)", (assert) => {
+    const zxs = make48();
+    zxs.reset();
+    const ram = zxs.getRAM();
+    ram[0x0000] = 0xFF;
+    ram[0x1800] = 0x87;  // flash=1, ink=7(white), paper=0(black)
+    // Run 17 frames so the last frame executes with frameCount=16, flashPhase=1
+    for (let i = 0; i < 17; i++) zxs.frame(69888, null);
+    const buf = zxs.getVideoBuffer();
+    const offset = (48 * 352 + 48) * 4;
+    assert.strictEqual(buf[offset],     0, "flashPhase=1: swapped to paper black R=0");
+    assert.strictEqual(buf[offset + 1], 0, "flashPhase=1: swapped to paper black G=0");
+    assert.strictEqual(buf[offset + 2], 0, "flashPhase=1: swapped to paper black B=0");
+  });
+
+});
