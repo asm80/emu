@@ -523,6 +523,38 @@ export const createZXS = (options = {}) => {
     return table;
   };
 
+  /**
+   * Process all pending ULA video events up to (and including) currentT.
+   *
+   * Called reactively on VRAM writes, border color changes, and floating bus reads.
+   * Maintains screenEventPtr and frameBufferPtr across calls within a frame.
+   * Updates floatingBusValue with the last byte the ULA fetched.
+   *
+   * @param {number} currentT - Frame-relative T-state upper bound (inclusive)
+   */
+  const updateFramebuffer = (currentT) => {
+    while (true) {
+      const evT = screenEventsTable[screenEventPtr];
+      if (evT > currentT || evT === 0xFFFFFFFF) break;
+      const data = screenEventsTable[screenEventPtr + 1];
+      if (data === 0xFFFFFFFF) {
+        frameBuffer[frameBufferPtr++] = borderColor;
+        floatingBusValue = 0xFF;
+      } else {
+        const pixAddr  = data & 0xFFFF;
+        const attrAddr = data >> 16;
+        const vramBase = is128k ? screenBank * 16384 : 0;
+        const ram      = is128k ? ram128 : ram48;
+        const pixByte  = ram[vramBase + pixAddr];
+        const attrByte = ram[vramBase + attrAddr];
+        frameBuffer[frameBufferPtr++] = pixByte;
+        frameBuffer[frameBufferPtr++] = attrByte;
+        floatingBusValue = attrByte;
+      }
+      screenEventPtr += 2;
+    }
+  };
+
   // ── Keyboard ──────────────────────────────────────────────────────────────
 
   /**
@@ -1082,6 +1114,13 @@ export const createZXS = (options = {}) => {
      */
     trace: (on) => cpu.trace(on),
     getScreenEventsTable: () => screenEventsTable,
+    getFloatingBusValue: () => floatingBusValue,
+    getFrameBufferByte:  (i) => frameBuffer[i],
+    updateFramebufferTo: (t) => {
+      // Test helper: flush events up to T from the start of a frame.
+      // Assumes pointers are at 0 (i.e., called right after reset).
+      updateFramebuffer(t);
+    },
     floatingBusAt,
     contentionAt,
     ioContentionForPort,

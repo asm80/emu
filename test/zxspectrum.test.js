@@ -689,3 +689,65 @@ QUnit.module("screenEventsTable (48k)", () => {
   });
 
 });
+
+// ── updateFramebuffer ─────────────────────────────────────────────────────────
+
+QUnit.module("updateFramebuffer (48k)", () => {
+
+  QUnit.test("floatingBusValue starts at 0xFF after reset", (assert) => {
+    const zxs = make48();
+    assert.strictEqual(zxs.getFloatingBusValue(), 0xFF,
+      "floatingBusValue starts at 0xFF");
+  });
+
+  QUnit.test("after flush at T=14359, floatingBusValue = attrByte at 0x1800", (assert) => {
+    // T=14359 = first pixel event (active line 0, xByte=0)
+    // pixAddr=0x0000, attrAddr=0x1800
+    const zxs = make48();
+    const ram = zxs.getRAM();
+    ram[0x0000] = 0xAB;  // pixel byte
+    ram[0x1800] = 0xCD;  // attr byte
+    zxs.updateFramebufferTo(14359);
+    assert.strictEqual(zxs.getFloatingBusValue(), 0xCD,
+      "floatingBusValue = attrByte after pixel event");
+  });
+
+  QUnit.test("after flush at T=14355 (still left-border), floatingBusValue = 0xFF", (assert) => {
+    // lineBaseT for active line 0 = 14335
+    // Left border events at T=14335, 14343, 14351 — last one at 14351
+    // Next pixel event at T=14359
+    // T=14355 is after border events (14351 <= 14355) but before pixel event (14359 > 14355)
+    // So last processed event is border → floatingBusValue = 0xFF
+    const zxs = make48();
+    const ram = zxs.getRAM();
+    ram[0x1800] = 0xCD;
+    zxs.updateFramebufferTo(14355);
+    assert.strictEqual(zxs.getFloatingBusValue(), 0xFF,
+      "floatingBusValue = 0xFF in left border");
+  });
+
+  QUnit.test("frameBuffer byte 0 = borderColor=7 after first event at T=3583", (assert) => {
+    const zxs = make48();
+    zxs.updateFramebufferTo(3583);
+    // First event at T=3583 is a border event, borderColor starts at 7
+    assert.strictEqual(zxs.getFrameBufferByte(0), 7,
+      "first frameBuffer byte = borderColor=7");
+  });
+
+  QUnit.test("pixel event writes pixelByte then attrByte", (assert) => {
+    const zxs = make48();
+    const ram = zxs.getRAM();
+    ram[0x0000] = 0x55;
+    ram[0x1800] = 0x38;
+    // Flush past first pixel event at T=14359
+    zxs.updateFramebufferTo(14360);
+    // frameBuffer layout up to first pixel event:
+    // - 48 border scanlines x 22 events = 1056 border bytes (each event = 1 byte)
+    // - active line 0: 3 left-border events x 1B = 3 bytes
+    // - then pixel event: pixByte at [1059], attrByte at [1060]
+    const pixelOffset = 1056 + 3;
+    assert.strictEqual(zxs.getFrameBufferByte(pixelOffset),     0x55, "pixelByte written");
+    assert.strictEqual(zxs.getFrameBufferByte(pixelOffset + 1), 0x38, "attrByte written");
+  });
+
+});
