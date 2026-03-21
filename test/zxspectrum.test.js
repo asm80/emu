@@ -821,3 +821,26 @@ QUnit.module("decodeFrameBuffer (48k)", () => {
   });
 
 });
+
+// ── reactive VRAM hook ────────────────────────────────────────────────────────
+
+QUnit.module("reactive VRAM hook (48k)", () => {
+
+  QUnit.test("VRAM state at frame start determines rendered pixels", (assert) => {
+    // Set VRAM before frame(), verify pixels appear correctly.
+    // This works even without mid-frame writes because updateFramebuffer(frameLen)
+    // is called at end of frame() — so VRAM state at that point is captured.
+    const zxs = make48();
+    zxs.reset();
+    const ram = zxs.getRAM();
+    ram[0x0000] = 0xFF;   // all ink bits for active line 0, column 0
+    ram[0x1800] = 0x07;   // ink=7(white), paper=0(black)
+    zxs.frame(69888, null);
+    const buf = zxs.getVideoBuffer();
+    const offset = (48 * 352 + 48) * 4;  // active line 0, x=48 = first active pixel
+    assert.strictEqual(buf[offset],     215, "ink white R=215");
+    assert.strictEqual(buf[offset + 1], 215, "ink white G=215");
+    assert.strictEqual(buf[offset + 2], 215, "ink white B=215");
+  });
+
+});

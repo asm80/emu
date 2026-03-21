@@ -650,6 +650,11 @@ export const createZXS = (options = {}) => {
    */
   const byteTo = (addr, val) => {
     if (addr < 0x4000) return;  // ROM is read-only
+    // Flush ULA events up to current T BEFORE the write takes effect.
+    // Events already flushed will read old VRAM; events flushed after will read new.
+    if (addr >= 0x4000 && addr < 0x5B00) {
+      updateFramebuffer(cpu.T() - frameBaseT);
+    }
     if (is128k) {
       if (addr < 0x8000) { ram128[5 * 16384 + (addr - 0x4000)] = val & 0xFF; return; }
       if (addr < 0xC000) { ram128[2 * 16384 + (addr - 0x8000)] = val & 0xFF; return; }
@@ -700,9 +705,9 @@ export const createZXS = (options = {}) => {
     if (!(port & 0xE0)) return 0;
 
     // Odd unhandled port: floating bus (ULA drives the last VRAM byte it fetched)
-    const result = floatingBusAt(cpu.T() - frameBaseT + ioContentionExtra);
+    updateFramebuffer(cpu.T() - frameBaseT + ioContentionExtra);
     ioContentionExtra += ioContentionForPort(port, fullAddr, cpu.T() - frameBaseT + ioContentionExtra);
-    return result;
+    return floatingBusValue;
   };
 
   /**
@@ -716,6 +721,9 @@ export const createZXS = (options = {}) => {
     // ULA write: any even port address
     if ((fullAddr & 0x0001) === 0) {
       const newBorder = val & 0x07;
+      if (newBorder !== borderColor) {
+        updateFramebuffer(cpu.T() - frameBaseT);
+      }
       borderEvents.push(cpu.T() - frameBaseT, newBorder);
       borderColor = newBorder;
       const newBeeper = (val >> 4) & 1;
