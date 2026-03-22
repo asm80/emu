@@ -165,9 +165,10 @@ export default (callbacks) => {
   let interruptPending = false;
   let NMIPending = false;
 
-  // Optional contention callbacks (for ZX Spectrum timing)
-  const contend_read = contendRead || ((addr, cycles) => cycles);
-  const contend_write = contendWrite || ((addr, cycles) => cycles);
+  // Optional contention callbacks (for ZX Spectrum timing).
+  // Called as contend_read(addr, tstates) — returns extra T-states to insert before the access.
+  const contend_read = contendRead || (() => 0);
+  const contend_write = contendWrite || (() => 0);
 
   /**
    * Reset CPU to initial state
@@ -193,9 +194,13 @@ export default (callbacks) => {
   /**
    * Memory access helpers
    */
-  const readByte = (addr) => byteAt(addr & 0xFFFF);
+  const readByte = (addr) => {
+    tstates += contend_read(addr & 0xFFFF, tstates);
+    return byteAt(addr & 0xFFFF);
+  };
 
   const writeByte = (addr, value) => {
+    tstates += contend_write(addr & 0xFFFF, tstates);
     byteTo(addr & 0xFFFF, value & 0xFF);
   };
 
@@ -676,7 +681,7 @@ export default (callbacks) => {
         const outi_val = readByte(regPairs[RP_HL]);
         regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
         regs[R_B] = (regs[R_B] - 1) & 0xFF;
-        if (portOut) portOut(regs[R_C], outi_val);
+        if (portOut) portOut(regs[R_C], outi_val, regPairs[RP_BC]);
         const outi_k = outi_val + regs[R_L];
         regs[R_F] = sz53Table[regs[R_B]] |
                     (outi_k > 255 ? FLAG_H | FLAG_C : 0) |
@@ -690,7 +695,7 @@ export default (callbacks) => {
         const outd_val = readByte(regPairs[RP_HL]);
         regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
         regs[R_B] = (regs[R_B] - 1) & 0xFF;
-        if (portOut) portOut(regs[R_C], outd_val);
+        if (portOut) portOut(regs[R_C], outd_val, regPairs[RP_BC]);
         const outd_k = outd_val + regs[R_L];
         regs[R_F] = sz53Table[regs[R_B]] |
                     (outd_k > 255 ? FLAG_H | FLAG_C : 0) |
@@ -704,7 +709,7 @@ export default (callbacks) => {
         const otir_val = readByte(regPairs[RP_HL]);
         regPairs[RP_HL] = (regPairs[RP_HL] + 1) & 0xFFFF;
         regs[R_B] = (regs[R_B] - 1) & 0xFF;
-        if (portOut) portOut(regs[R_C], otir_val);
+        if (portOut) portOut(regs[R_C], otir_val, regPairs[RP_BC]);
         const otir_k = otir_val + regs[R_L];
         regs[R_F] = sz53Table[regs[R_B]] |
                     (otir_k > 255 ? FLAG_H | FLAG_C : 0) |
@@ -723,7 +728,7 @@ export default (callbacks) => {
         const otdr_val = readByte(regPairs[RP_HL]);
         regPairs[RP_HL] = (regPairs[RP_HL] - 1) & 0xFFFF;
         regs[R_B] = (regs[R_B] - 1) & 0xFF;
-        if (portOut) portOut(regs[R_C], otdr_val);
+        if (portOut) portOut(regs[R_C], otdr_val, regPairs[RP_BC]);
         const otdr_k = otdr_val + regs[R_L];
         regs[R_F] = sz53Table[regs[R_B]] |
                     (otdr_k > 255 ? FLAG_H | FLAG_C : 0) |

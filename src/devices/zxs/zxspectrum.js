@@ -400,6 +400,11 @@ export const createZXS = (options = {}) => {
   /** Running total of extra T-states accumulated by I/O contention this frame. */
   let ioContentionExtra = 0;
 
+  // ── Debug port capture ────────────────────────────────────────────────────
+  let _portCapture = null;   // null = inactive; array = collecting
+  let _portCaptureFrames = 0;
+  let _portCaptureResult = null;  // holds completed capture until next capturePortOut()
+
   // ── Deferred frameBuffer (JSSpeccy3-style ULA log) ────────────────────────
 
   /** Pre-computed ULA video events for one full frame. Built at reset(). */
@@ -668,6 +673,8 @@ export const createZXS = (options = {}) => {
    * @param {number} fullAddr - Full 16-bit port address
    */
   const portOut = (port, val, fullAddr) => {
+    if (_portCapture) _portCapture.push({ t: cpu.T() - frameBaseT, port: fullAddr, val });
+
     // ULA write: any even port address
     if ((fullAddr & 0x0001) === 0) {
       const newBorder = val & 0x07;
@@ -861,6 +868,11 @@ export const createZXS = (options = {}) => {
       updateFramebuffer(frameLen);
       decodeFrameBuffer(flashPhase);
 
+      if (_portCapture && --_portCaptureFrames <= 0) {
+        _portCaptureResult = _portCapture;
+        _portCapture = null;
+      }
+
       // Flush any remaining tape T-states not consumed by IN instructions
       // (e.g. frames where the loader isn't actively sampling).
       if (tapePlaying) {
@@ -1039,6 +1051,41 @@ export const createZXS = (options = {}) => {
      * @param {boolean} on - True to enable tracing
      */
     trace: (on) => cpu.trace(on),
+
+    /**
+     * Start capturing all portOut calls for the next `frames` frames (default 1).
+     * After capture completes, call dumpPortCapture() to inspect results.
+     */
+    capturePortOut: (frames = 1) => {
+      _portCaptureResult = null;
+      _portCapture = [];
+      _portCaptureFrames = frames;
+    },
+
+    /**
+     * Return captured port writes grouped by port address, sorted by T-state.
+     * Prints a summary to the console and returns the raw array.
+     */
+    dumpPortCapture: () => {
+      const data = _portCaptureResult;
+      if (!data) {
+        console.warn("No capture data — call capturePortOut() first and wait a frame.");
+        return [];
+      }
+      // Group by port address for a compact summary
+      const byPort = {};
+      for (const e of data) {
+        const key = "0x" + e.port.toString(16).toUpperCase().padStart(4, "0");
+        if (!byPort[key]) byPort[key] = [];
+        byPort[key].push({ t: e.t, val: e.val });
+      }
+      console.log(`=== portOut capture: ${data.length} total writes ===`);
+      for (const [port, events] of Object.entries(byPort).sort()) {
+        const vals = [...new Set(events.map(e => "0x" + e.val.toString(16).padStart(2,"0")))].join(", ");
+        console.log(`  ${port} (${events.length}x): values=${vals}  first-T=${events[0].t}`);
+      }
+      return data;
+    },
     /** @returns {Uint32Array} Pre-computed ULA video event table for current frame. */
     getScreenEventsTable: () => screenEventsTable,
 

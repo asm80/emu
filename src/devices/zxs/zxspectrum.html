@@ -26,6 +26,7 @@
     <button id="btnPlay">▶ Play</button>
     <button id="btnStop">■ Stop</button>
     <button id="btnReset">Reset</button>
+    <button id="btnPortSnap">PortSnap</button>
     <span id="status">Ready — click Reset or load a .SNA to start audio</span>
   </div>
 
@@ -160,6 +161,16 @@
       startEmulator(e.target.value);
     });
 
+    document.getElementById("btnPortSnap").addEventListener("click", () => {
+      if (!zxs) { statusEl.textContent = "No emulator running."; return; }
+      zxs.capturePortOut();
+      statusEl.textContent = "PortSnap: capturing next frame…";
+      setTimeout(() => {
+        zxs.dumpPortCapture();
+        statusEl.textContent = "PortSnap done — see browser console (F12).";
+      }, 200);
+    });
+
     document.getElementById("btnReset").addEventListener("click", () => {
       initAudio();
       const model = document.getElementById("model").value;
@@ -218,10 +229,18 @@
     });
 
     // ── Main RAF loop ─────────────────────────────────────────────────────────
-    // Timestamp-based T-state calculation: generate exactly dt * cpuHz / 1000
-    // T-states per RAF call. This keeps audio rate == wall clock rate == 44100 Hz,
-    // regardless of monitor refresh rate (50 Hz, 60 Hz, 144 Hz, etc.).
-    let lastTime = null;
+    // Always run frame() with exactly one ZX Spectrum interrupt period (69888T
+    // for 48k, 70908T for 128k). This is critical for cycle-accurate border
+    // timing: if tStates < framePeriod, the interrupt fires at a different
+    // frame-relative position each RAF call, causing raster effects to scroll.
+    //
+    // We accumulate wall-clock time in T-states and drain it one full frame at
+    // a time. On a 60 Hz monitor, frame() is called ~5 times per 6 RAF ticks.
+    const FRAME_T = { "48k": 69888, "128k": 70908 };
+    const CPU_HZ  = { "48k": 3500000, "128k": 3546900 };
+
+    let lastTime  = null;
+    let accumT    = 0;   // fractional T-states carried over from previous RAF
 
     const loop = (timestamp) => {
       requestAnimationFrame(loop);
@@ -232,21 +251,26 @@
       lastTime = timestamp;
 
       // Cap dt to avoid "spiral of death" after tab was backgrounded
-      if (dt > 50) dt = 20;
+      if (dt > 100) dt = 20;
 
       const model  = document.getElementById("model").value;
-      const cpuHz  = model === "128k" ? 3546900 : 3500000;
-      const tStates = Math.round(dt * cpuHz / 1000);
+      const frameT = FRAME_T[model] ?? 69888;
+      const cpuHz  = CPU_HZ[model]  ?? 3500000;
 
-      const result = zxs.frame(tStates, KEY_MATRIX);
-      if (!result.initialized) return;
+      accumT += dt * cpuHz / 1000;
 
-      // Render video
-      imgData.data.set(result.video);
-      ctx.putImageData(imgData, 0, 0);
+      // Run as many complete ZX frames as have accumulated; render the last one.
+      let lastResult = null;
+      while (accumT >= frameT) {
+        accumT -= frameT;
+        lastResult = zxs.frame(frameT, KEY_MATRIX);
+        if (lastResult.initialized) addAudio(lastResult.audio);
+      }
 
-      // Add audio to ring buffer — zero allocation, no GC pressure
-      addAudio(result.audio);
+      if (lastResult && lastResult.initialized) {
+        imgData.data.set(lastResult.video);
+        ctx.putImageData(imgData, 0, 0);
+      }
     };
 
     // Auto-start (no audio until user interacts — browser policy)
