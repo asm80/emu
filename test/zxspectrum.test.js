@@ -577,10 +577,10 @@ QUnit.module("I/O contention accounting (48k)", () => {
 
 QUnit.module("screenEventsTable (48k)", () => {
 
-  QUnit.test("first event T-state = visStartT = 3583", (assert) => {
+  QUnit.test("first event T-state = visStartT = 3559", (assert) => {
     const zxs = make48();
     const tbl = zxs.getScreenEventsTable();
-    assert.strictEqual(tbl[0], 3583, "first event at T=3583");
+    assert.strictEqual(tbl[0], 3559, "first event at T=3559");
   });
 
   QUnit.test("first event is a border event (data = 0xFFFFFFFF)", (assert) => {
@@ -589,16 +589,16 @@ QUnit.module("screenEventsTable (48k)", () => {
     assert.strictEqual(tbl[1], 0xFFFFFFFF, "first event is border");
   });
 
-  QUnit.test("first pixel event T-state = 14359", (assert) => {
-    // Active line 0 = visible line 48, lineBaseT = 3583 + 48*224 = 14335
-    // First pixel event at lineBaseT + 24 = 14359
+  QUnit.test("first pixel event T-state = 14335", (assert) => {
+    // Active line 0 = visible line 48, lineBaseT = 3559 + 48*224 = 14311
+    // First pixel event at lineBaseT + 24 = 14335
     const zxs = make48();
     const tbl = zxs.getScreenEventsTable();
     // Skip 48 border scanlines x 22 events = 1056 events = 2112 u32 slots
     // First 3 events of active line are left-border
     // 4th event is the first pixel event
     const firstPixelIdx = 1056 * 2 + 3 * 2;
-    assert.strictEqual(tbl[firstPixelIdx], 14359, "first pixel event T=14359");
+    assert.strictEqual(tbl[firstPixelIdx], 14335, "first pixel event T=14335");
   });
 
   QUnit.test("first pixel event has data != 0xFFFFFFFF", (assert) => {
@@ -741,6 +741,93 @@ QUnit.module("reactive VRAM hook (48k)", () => {
     assert.strictEqual(buf[offset],     215, "ink white R=215");
     assert.strictEqual(buf[offset + 1], 215, "ink white G=215");
     assert.strictEqual(buf[offset + 2], 215, "ink white B=215");
+  });
+
+});
+
+// ── mid-frame border timing ───────────────────────────────────────────────────
+
+QUnit.module("mid-frame border timing (48k)", () => {
+
+  /**
+   * Build a minimal 48k SNA that runs NOPs then changes the border.
+   *
+   * State: IFF1=0 (no interrupts), A=colorA, border=colorB, PC=0x8000, IM=1.
+   * Code at 0x8000: (nNops × NOP), OUT (0xFE),A, HALT.
+   *
+   * The portOut call fires when tstates == nNops * 4 (each NOP = 4T, portOut is
+   * called before tstates += 11 for the OUT instruction itself).
+   *
+   * @param {number} nNops   - Number of NOP (0x00) instructions before OUT
+   * @param {number} colorA  - Border color written by OUT (0–7)
+   * @param {number} colorB  - Initial border color (0–7)
+   * @returns {Uint8Array} 49179-byte SNA image
+   */
+  const buildTimingSNA = (nNops, colorA, colorB) => {
+    const sna = new Uint8Array(49179);
+    sna[19] = 0x00;                    // IFF = 0 (no interrupts)
+    sna[21] = colorA;                  // A register = colorA
+    sna[22] = 0xFF;                    // F register
+    sna[23] = 0xFE; sna[24] = 0xFF;   // SP = 0xFFFE
+    sna[25] = 1;                       // IM = 1
+    sna[26] = colorB;                  // initial border color
+    // PC on stack at SP=0xFFFE: ram48[0xBFFE]=PClo, ram48[0xBFFF]=PChi → PC=0x8000
+    sna[27 + 0xBFFE] = 0x00;
+    sna[27 + 0xBFFF] = 0x80;
+    // Code at 0x8000 (= SNA data offset 27 + (0x8000 - 0x4000) = 27 + 0x4000)
+    const base = 27 + 0x4000;
+    sna.fill(0x00, base, base + nNops);    // NOP × nNops
+    sna[base + nNops]     = 0xD3;          // OUT (n), A
+    sna[base + nNops + 1] = 0xFE;          //   port 0xFE (ULA)
+    sna[base + nNops + 2] = 0x76;          // HALT
+    return sna;
+  };
+
+  const px = (buf, x, y) => ({
+    r: buf[(y * 352 + x) * 4],
+    g: buf[(y * 352 + x) * 4 + 1],
+    b: buf[(y * 352 + x) * 4 + 2],
+  });
+
+  const WHITE = { r: 215, g: 215, b: 215 };
+  const RED   = { r: 215, g: 0,   b: 0   };
+
+  QUnit.test("OUT at T=3556 (before first event T=3559): all border pixels red", (assert) => {
+    // 889 NOPs → portOut fires when tstates=3556 < 3559 (first screenEvent).
+    // updateFramebuffer(3556) flushes 0 events → borderColor becomes 2 (red).
+    // All 9584 events then use red → entire visible frame border = red.
+    const zxs = make48();
+    zxs.loadSNA(buildTimingSNA(889, 2, 7));
+    zxs.frame(69888, null);
+    const buf = zxs.getVideoBuffer();
+    assert.deepEqual(px(buf,  0,   0), RED, "top-left border (0,0) = red");
+    assert.deepEqual(px(buf,  0, 295), RED, "bottom-left border (0,295) = red");
+  });
+
+  QUnit.test("OUT at T=3560 (after first event T=3559): first 16px white, next 16px red", (assert) => {
+    // 890 NOPs → portOut fires when tstates=3560.
+    // updateFramebuffer(3560): event at T=3559 ≤ 3560 → flushed with OLD white.
+    // borderColor becomes red → all subsequent events (T≥3567) use red.
+    const zxs = make48();
+    zxs.loadSNA(buildTimingSNA(890, 2, 7));
+    zxs.frame(69888, null);
+    const buf = zxs.getVideoBuffer();
+    assert.deepEqual(px(buf,  0, 0), WHITE, "group 0 (x=0,  T=3559 ≤ 3560) = white");
+    assert.deepEqual(px(buf, 16, 0), RED,   "group 1 (x=16, T=3567 > 3560) = red");
+  });
+
+  QUnit.test("OUT at T=14740 (HBlank gap): visible line 49 white, line 50 red", (assert) => {
+    // Visible line 49 last event:  right-border group 2 at T=3559+49*224+168=14703.
+    // Visible line 50 first event: left-border  group 0 at T=3559+50*224    =14759.
+    // T_out=14740 sits in the HBlank gap (14703 < 14740 < 14759).
+    // Events of line 49 (≤14703) use white; events of line 50+ (≥14759) use red.
+    // 3685 NOPs → T_out = 14740.
+    const zxs = make48();
+    zxs.loadSNA(buildTimingSNA(3685, 2, 7));
+    zxs.frame(69888, null);
+    const buf = zxs.getVideoBuffer();
+    assert.deepEqual(px(buf, 0, 49), WHITE, "left border of visible line 49 = white");
+    assert.deepEqual(px(buf, 0, 50), RED,   "left border of visible line 50 = red");
   });
 
 });
