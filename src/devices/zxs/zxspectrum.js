@@ -428,7 +428,7 @@ export const createZXS = (options = {}) => {
   const buildScreenEventsTable = () => {
     const scanlineT   = is128k ? TSTATE_PER_LINE_128 : TSTATE_PER_LINE_48;
     const screenStart = is128k ? SCREEN_START_T_128  : SCREEN_START_T_48;
-    const visStartT   = screenStart - TOP_BORDER * scanlineT;
+    const visStartT   = screenStart - TOP_BORDER * scanlineT - (LEFT_BORDER_PX / 2);
     const table = new Uint32Array(9584 * 2 + 2);
     let ptr = 0;
 
@@ -684,8 +684,15 @@ export const createZXS = (options = {}) => {
 
     // 128k memory paging
     if (is128k && (fullAddr & 0xC002) === 0x4000 && !pagingDisabled) {
+      const newScreenBank = (val & 0x08) ? 7 : 5;
+      if (newScreenBank !== screenBank) {
+        // Flush pending scanlines with the current screen bank before switching.
+        // This is what produces mid-frame multicolor: each bank switch is a
+        // "screen bank change event" that splits the frame into segments.
+        updateFramebuffer(cpu.T() - frameBaseT);
+      }
       ramBank = val & 0x07;
-      screenBank = (val & 0x08) ? 7 : 5;
+      screenBank = newScreenBank;
       romBank = (val & 0x10) ? 1 : 0;
       if (val & 0x20) pagingDisabled = true;
     }
@@ -702,7 +709,29 @@ export const createZXS = (options = {}) => {
 
   // ── CPU ───────────────────────────────────────────────────────────────────
 
-  const cpu = createZ80({ byteAt, byteTo, portIn, portOut });
+  /**
+   * ULA memory contention lookup for the Z80 callbacks.
+   * Returns extra T-states to insert before a memory access at `addr`
+   * given that the CPU's internal T-counter is currently `cpuT`.
+   *
+   * Contended region: 0x4000–0x7FFF (bank 5 / 48K screen RAM).
+   * For 128K, the paged bank at 0xC000 is also contended if it is an odd bank.
+   *
+   * @param {number} addr  - 16-bit address being accessed
+   * @param {number} cpuT  - current Z80 T-state counter
+   * @returns {number} Extra T-states (0 if no contention)
+   */
+  const memContend = (addr, cpuT) => {
+    let contended = (addr >= 0x4000 && addr < 0x8000);
+    if (!contended && is128k && addr >= 0xC000 && (ramBank & 1)) contended = true;
+    if (!contended) return 0;
+    const frameLen = is128k ? FRAME_T_128 : FRAME_T_48;
+    const frameRelT = cpuT - frameBaseT;
+    if (frameRelT < 0) return 0;
+    return contentionTable[frameRelT % frameLen] ?? 0;
+  };
+
+  const cpu = createZ80({ byteAt, byteTo, portIn, portOut, contendRead: memContend, contendWrite: memContend });
 
   // ── Tape playback ─────────────────────────────────────────────────────────
 
