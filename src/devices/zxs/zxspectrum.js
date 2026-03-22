@@ -29,16 +29,16 @@ const SCANLINE_TSTATES_48  = 224;
 const SCANLINE_TSTATES_128 = 228;
 
 const SCANLINES      = 312;   // total scanlines including vertical retrace
-const TOP_BORDER     = 48;
+const TOP_BORDER     = 24;
 const ACTIVE_LINES   = 192;
-const BOTTOM_BORDER  = 56;
-const LEFT_BORDER_PX = 48;
-const VISIBLE_LINES  = TOP_BORDER + ACTIVE_LINES + BOTTOM_BORDER;  // 296
+const BOTTOM_BORDER  = 24;
+const LEFT_BORDER_PX = 32;
+const VISIBLE_LINES  = TOP_BORDER + ACTIVE_LINES + BOTTOM_BORDER;  // 240
 
 // Visible display dimensions (no retrace, no horizontal blanking)
-const SCREEN_W    = LEFT_BORDER_PX + 256 + LEFT_BORDER_PX;  // 352
-const SCREEN_H    = VISIBLE_LINES;                           // 296
-const VIDEO_BYTES = SCREEN_W * SCREEN_H * 4;                // 352×296×4 = 416384
+const SCREEN_W    = LEFT_BORDER_PX + 256 + LEFT_BORDER_PX;  // 320
+const SCREEN_H    = VISIBLE_LINES;                           // 240
+const VIDEO_BYTES = SCREEN_W * SCREEN_H * 4;                // 320×240×4 = 307200
 
 /** ZX Spectrum 16-color RGBA palette (8 normal + 8 bright), little-endian RGBA. */
 const ZX_PALETTE_RGBA = new Uint32Array(16);
@@ -397,7 +397,33 @@ export const createZXS = (options = {}) => {
     }
   };
 
-  /** Running total of extra T-states accumulated by I/O contention this frame. */
+  /**
+   * Return only the contention wait-states for a port access (no base I/O cycle time).
+   * Used internally to compute the extra T-states to inject into the CPU.
+   *
+   * @param {number} fullAddr - Full 16-bit port address
+   * @param {number} frameT   - Frame-relative T-state at start of I/O access
+   * @returns {number} Extra wait-state T-states caused by ULA contention
+   */
+  const ioContention = (fullAddr, frameT) => {
+    const frameLen = is128k ? FRAME_T_128 : FRAME_T_48;
+    const isEven = (fullAddr & 0x0001) === 0;
+    const isContendedAddr = (fullAddr & 0xC000) === 0x4000;
+    if (isEven) {
+      // Even (ULA) port: contend check at T and T+1 (pre-I/O and post-I/O)
+      return contentionTable[frameT % frameLen] + contentionTable[(frameT + 1) % frameLen];
+    } else if (isContendedAddr) {
+      // Odd contended port: 3 contention checks, each after 1T base sub-cycle
+      let total = 0;
+      for (let i = 0; i < 3; i++) {
+        total += contentionTable[(frameT + i + total) % frameLen];
+      }
+      return total;
+    }
+    return 0;
+  };
+
+  /** Running total of extra T-states accumulated by I/O contention this frame (portIn only). */
   let ioContentionExtra = 0;
 
   // ── Debug port capture ────────────────────────────────────────────────────
@@ -434,7 +460,12 @@ export const createZXS = (options = {}) => {
     const scanlineT   = is128k ? TSTATE_PER_LINE_128 : TSTATE_PER_LINE_48;
     const screenStart = is128k ? SCREEN_START_T_128  : SCREEN_START_T_48;
     const visStartT   = screenStart - TOP_BORDER * scanlineT - (LEFT_BORDER_PX / 2);
-    const table = new Uint32Array(9584 * 2 + 2);
+    const leftT  = LEFT_BORDER_PX / 2;   // T-states for left border (16T = 2×8T)
+    const rightT = leftT + 128;          // T-state where right border starts (144T)
+    const leftGroups  = LEFT_BORDER_PX / 16;  // 2 groups of 16px each
+    // Pairs per line: leftGroups + 32 active + leftGroups (right) = 36 per active line, 34 per border line
+    // Border lines: 48 × (2+16+2)=20 = 960; active: 192 × (2+32+2)=36 = 6912; total = 7872
+    const table = new Uint32Array(7872 * 2 + 2);
     let ptr = 0;
 
     for (let line = 0; line < VISIBLE_LINES; line++) {
@@ -442,32 +473,32 @@ export const createZXS = (options = {}) => {
       const isActive  = line >= TOP_BORDER && line < TOP_BORDER + ACTIVE_LINES;
       const y         = line - TOP_BORDER;  // 0-191 for active lines
 
-      // Left border: 3 x 8T groups at T=0, 8, 16
-      for (let g = 0; g < 3; g++) {
+      // Left border: 2 x 8T groups at T=0, 8
+      for (let g = 0; g < leftGroups; g++) {
         table[ptr++] = lineBaseT + g * 8;
         table[ptr++] = 0xFFFFFFFF;
       }
 
       if (isActive) {
-        // Active display: 32 x 4T fetches starting at T=24
+        // Active display: 32 x 4T fetches starting at T=leftT
         for (let xByte = 0; xByte < 32; xByte++) {
           const pixAddr  = ((y & 0xC0) << 5) | ((y & 0x07) << 8) |
                            ((y & 0x38) << 2) | xByte;
           const attrAddr = 0x1800 | ((y >> 3) * 32) | xByte;
-          table[ptr++] = lineBaseT + 24 + xByte * 4;
+          table[ptr++] = lineBaseT + leftT + xByte * 4;
           table[ptr++] = pixAddr | (attrAddr << 16);
         }
       } else {
         // Border across active-display width: 16 x 8T groups
         for (let g = 0; g < 16; g++) {
-          table[ptr++] = lineBaseT + 24 + g * 8;
+          table[ptr++] = lineBaseT + leftT + g * 8;
           table[ptr++] = 0xFFFFFFFF;
         }
       }
 
-      // Right border: 3 x 8T groups at T=152, 160, 168
-      for (let g = 0; g < 3; g++) {
-        table[ptr++] = lineBaseT + 152 + g * 8;
+      // Right border: 2 x 8T groups at T=144, 152
+      for (let g = 0; g < leftGroups; g++) {
+        table[ptr++] = lineBaseT + rightT + g * 8;
         table[ptr++] = 0xFFFFFFFF;
       }
     }
@@ -672,19 +703,25 @@ export const createZXS = (options = {}) => {
    * @param {number} val      - Byte value written
    * @param {number} fullAddr - Full 16-bit port address
    */
-  const portOut = (port, val, fullAddr) => {
-    if (_portCapture) _portCapture.push({ t: cpu.T() - frameBaseT, port: fullAddr, val });
+  const portOut = (port, val, fullAddr, ioOffset = 8) => {
+    const frameT = cpu.T() - frameBaseT;
+    // portOut is called before z80.js adds the base T-states for the instruction.
+    // ioOffset is passed by z80.js: 8 for OUT (C),r (2× M1 = 8T), 7 for OUT (n),A (M1+M2 = 7T).
+    // Contention must also be computed at the I/O cycle start, not instruction start.
+    const ioFrameT = frameT + ioOffset;
+    const contention = ioContention(fullAddr, ioFrameT);
+    if (_portCapture) _portCapture.push({ t: frameT, port: fullAddr, val });
 
     // ULA write: any even port address
     if ((fullAddr & 0x0001) === 0) {
       const newBorder = val & 0x07;
       if (newBorder !== borderColor) {
-        updateFramebuffer(cpu.T() - frameBaseT);
+        updateFramebuffer(ioFrameT + contention);
       }
       borderColor = newBorder;
       const newBeeper = (val >> 4) & 1;
       if (newBeeper !== beeperState) {
-        beeperEvents.push(cpu.T() - frameBaseT, newBeeper);
+        beeperEvents.push(ioFrameT + contention, newBeeper);
         beeperState = newBeeper;
       }
     }
@@ -693,10 +730,11 @@ export const createZXS = (options = {}) => {
     if (is128k && (fullAddr & 0xC002) === 0x4000 && !pagingDisabled) {
       const newScreenBank = (val & 0x08) ? 7 : 5;
       if (newScreenBank !== screenBank) {
-        // Flush pending scanlines with the current screen bank before switching.
-        // This is what produces mid-frame multicolor: each bank switch is a
-        // "screen bank change event" that splits the frame into segments.
-        updateFramebuffer(cpu.T() - frameBaseT);
+        // Flush pending ULA events up to the end of the OUT(C),r instruction.
+        // ioFrameT is the I/O cycle start (frameT + 8); the instruction ends
+        // 4T later (I/O cycle) + contention = ioFrameT + 4 + contention.
+        // Using frameT + 12 + contention is equivalent: 8 + 4 + contention.
+        updateFramebuffer(frameT + 12 + contention);
       }
       ramBank = val & 0x07;
       screenBank = newScreenBank;
@@ -710,8 +748,7 @@ export const createZXS = (options = {}) => {
     // AY register write
     if ((fullAddr & 0xC002) === 0x8000) ay.writeRegisterValue(val);
 
-    // Accumulate I/O contention penalty for timing helpers
-    ioContentionExtra += ioContentionForPort(port, fullAddr, cpu.T() - frameBaseT + ioContentionExtra);
+    return contention;
   };
 
   // ── CPU ───────────────────────────────────────────────────────────────────
@@ -828,7 +865,10 @@ export const createZXS = (options = {}) => {
     frame(tStates, keyMatrix) {
       if (!initialized) return { initialized: false };
 
-      tStates = tStates ?? (is128k ? SCANLINE_TSTATES_128 * SCANLINES : SCANLINE_TSTATES_48 * SCANLINES);
+      // 48k: 312 × 224 = 69888T; 128k: 311 × 228 = 70908T (one fewer scanline than 48k).
+      // Using interruptPeriod ensures frameBaseT aligns with the interrupt each frame,
+      // so all frame-relative T-state calculations (visStartT, contentionTable) are correct.
+      tStates = tStates ?? interruptPeriod;
       if (keyMatrix) currentKeyMatrix = keyMatrix;
 
       frameBaseT          = cpu.T();
@@ -1118,11 +1158,17 @@ export const createZXS = (options = {}) => {
     getBankingState: () => ({ romBank, ramBank, screenBank, pagingDisabled }),
 
     /**
-     * Get the current video buffer (448 × 312 RGBA).
+     * Get the current video buffer (SCREEN_W × SCREEN_H RGBA).
      *
      * @returns {Uint8Array} Raw RGBA byte buffer
      */
     getVideoBuffer: () => videoBuffer,
+
+    /** Width of the video buffer in pixels (including border). */
+    screenWidth: SCREEN_W,
+
+    /** Height of the video buffer in pixels (including border). */
+    screenHeight: SCREEN_H,
 
     /**
      * Load a .TAP tape image and prepare it for playback.

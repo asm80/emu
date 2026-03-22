@@ -1016,42 +1016,42 @@ export default (callbacks) => {
         break;
 
       case 0x41: // OUT (C),B
-        if (portOut) portOut(regPairs[RP_BC], regs[R_B], regPairs[RP_BC]);
+        if (portOut) tstates += portOut(regPairs[RP_BC], regs[R_B], regPairs[RP_BC], 8) || 0;
         tstates += 12;
         break;
 
       case 0x49: // OUT (C),C
-        if (portOut) portOut(regPairs[RP_BC], regs[R_C], regPairs[RP_BC]);
+        if (portOut) tstates += portOut(regPairs[RP_BC], regs[R_C], regPairs[RP_BC], 8) || 0;
         tstates += 12;
         break;
 
       case 0x51: // OUT (C),D
-        if (portOut) portOut(regPairs[RP_BC], regs[R_D], regPairs[RP_BC]);
+        if (portOut) tstates += portOut(regPairs[RP_BC], regs[R_D], regPairs[RP_BC], 8) || 0;
         tstates += 12;
         break;
 
       case 0x59: // OUT (C),E
-        if (portOut) portOut(regPairs[RP_BC], regs[R_E], regPairs[RP_BC]);
+        if (portOut) tstates += portOut(regPairs[RP_BC], regs[R_E], regPairs[RP_BC], 8) || 0;
         tstates += 12;
         break;
 
       case 0x61: // OUT (C),H
-        if (portOut) portOut(regPairs[RP_BC], regs[R_H], regPairs[RP_BC]);
+        if (portOut) tstates += portOut(regPairs[RP_BC], regs[R_H], regPairs[RP_BC], 8) || 0;
         tstates += 12;
         break;
 
       case 0x69: // OUT (C),L
-        if (portOut) portOut(regPairs[RP_BC], regs[R_L], regPairs[RP_BC]);
+        if (portOut) tstates += portOut(regPairs[RP_BC], regs[R_L], regPairs[RP_BC], 8) || 0;
         tstates += 12;
         break;
 
       case 0x71: // OUT (C),0 - undocumented
-        if (portOut) portOut(regPairs[RP_BC], 0, regPairs[RP_BC]);
+        if (portOut) tstates += portOut(regPairs[RP_BC], 0, regPairs[RP_BC], 8) || 0;
         tstates += 12;
         break;
 
       case 0x79: // OUT (C),A
-        if (portOut) portOut(regPairs[RP_BC], regs[R_A], regPairs[RP_BC]);
+        if (portOut) tstates += portOut(regPairs[RP_BC], regs[R_A], regPairs[RP_BC], 8) || 0;
         tstates += 12;
         break;
 
@@ -2441,7 +2441,7 @@ export default (callbacks) => {
 
       case 0xD3: { // OUT (n),A
         const port = fetchByte();
-        if (portOut) portOut(port, regs[R_A], (regs[R_A] << 8) | port);
+        if (portOut) tstates += portOut(port, regs[R_A], (regs[R_A] << 8) | port, 7) || 0;
         tstates += 11;
         break;
       }
@@ -2850,7 +2850,8 @@ export default (callbacks) => {
           case 2: {
             const vector = (regs[R_I] << 8) | 0xFF;
             regPairs[RP_PC] = readWord(vector);
-            tstates += 7;
+            // Same as normal IM 2 handler: 7T M1 ack + 3T×2 push + 3T×2 readWord = 19T
+            tstates += 19;
             break;
           }
         }
@@ -2893,7 +2894,8 @@ export default (callbacks) => {
           case 2: { // IM 2: Vectored interrupt
             const vector = (regs[R_I] << 8) | 0xFF;
             regPairs[RP_PC] = readWord(vector);
-            tstates += 7;
+            // 7T M1 ack + 3T×2 push (writeByte adds contention only) + 3T×2 readWord = 19T total
+            tstates += 19;
             break;
           }
         }
